@@ -25,40 +25,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
-
-func (c *Config) getM3U(ctx *gin.Context) {
-	ctx.Header("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, c.M3UFileName))
-	ctx.Header("Content-Type", "application/octet-stream")
-
-	ctx.File(c.proxyfiedM3UPath)
-}
-
-func (c *Config) reverseProxy(ctx *gin.Context) {
-	rpURL, err := url.Parse(c.track.URI)
-	if err != nil {
-		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
-		return
-	}
-
-	c.stream(ctx, rpURL)
-}
-
-func (c *Config) m3u8ReverseProxy(ctx *gin.Context) {
-	id := ctx.Param("id")
-
-	rpURL, err := url.Parse(strings.ReplaceAll(c.track.URI, path.Base(c.track.URI), id))
-	if err != nil {
-		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
-		return
-	}
-
-	c.stream(ctx, rpURL)
-}
 
 func (c *Config) stream(ctx *gin.Context, oriURL *url.URL) {
 	client := &http.Client{}
@@ -86,10 +56,10 @@ func (c *Config) stream(ctx *gin.Context, oriURL *url.URL) {
 	})
 }
 
-func (c *Config) xtreamStream(ctx *gin.Context, oriURL *url.URL) {
+func (c *Config) xtreamStream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 	id := ctx.Param("id")
 	if strings.HasSuffix(id, ".m3u8") {
-		c.hlsXtreamStream(ctx, oriURL)
+		c.hlsXtreamStream(ctx, oriURL, ru)
 		return
 	}
 
@@ -131,9 +101,14 @@ func (c *Config) authenticate(ctx *gin.Context) {
 		ctx.AbortWithError(http.StatusBadRequest, err) // nolint: errcheck
 		return
 	}
-	if c.ProxyConfig.User.String() != authReq.Username || c.ProxyConfig.Password.String() != authReq.Password {
+
+	user, xc, err := c.Store.Authenticate(authReq.Username, authReq.Password)
+	if err != nil {
 		ctx.AbortWithStatus(http.StatusUnauthorized)
+		return
 	}
+
+	setResolvedUser(ctx, resolvedUser{ProxyUser: user.Username, ProxyPassword: authReq.Password, Backend: xc})
 }
 
 func (c *Config) appAuthenticate(ctx *gin.Context) {
@@ -153,9 +128,14 @@ func (c *Config) appAuthenticate(ctx *gin.Context) {
 		return
 	}
 	slog.Info("app auth", "client", ctx.ClientIP())
-	if c.ProxyConfig.User.String() != q["username"][0] || c.ProxyConfig.Password.String() != q["password"][0] {
+
+	username, password := q["username"][0], q["password"][0]
+	user, xc, err := c.Store.Authenticate(username, password)
+	if err != nil {
 		ctx.AbortWithStatus(http.StatusUnauthorized)
+		return
 	}
+	setResolvedUser(ctx, resolvedUser{ProxyUser: user.Username, ProxyPassword: password, Backend: xc})
 
 	ctx.Request.Body = io.NopCloser(bytes.NewReader(contents))
 }

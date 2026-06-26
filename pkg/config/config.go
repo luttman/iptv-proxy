@@ -41,19 +41,16 @@ type HostConfiguration struct {
 	Port     int
 }
 
-// ProxyConfig Contain original m3u playlist and HostConfiguration
+// ProxyConfig contains the process-wide proxy settings. Per-user and
+// per-backend credentials live in the store (pkg/store), not here:
+// a single process now serves many proxy users, each assigned to one
+// of potentially several xtream-code backends.
 type ProxyConfig struct {
 	HostConfig           *HostConfiguration
-	XtreamUser           CredentialString
-	XtreamPassword       CredentialString
-	XtreamBaseURL        string
 	XtreamGenerateApiGet bool
 	M3UCacheExpiration   int
 	M3UFileName          string
 	CustomEndpoint       string
-	CustomId             string
-	RemoteURL            *url.URL
 	AdvertisedPort       int
 	HTTPS                bool
-	User, Password       CredentialString
 }

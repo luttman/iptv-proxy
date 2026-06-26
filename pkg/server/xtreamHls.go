@@ -41,7 +41,7 @@ func (c *Config) xtreamHlsStream(ctx *gin.Context) {
 	}
 	channel := s[0]
 
-	url, err := c.getHlsRedirectURL(channel)
+	redirect, err := c.getHlsRedirectURL(channel)
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
@@ -50,8 +50,8 @@ func (c *Config) xtreamHlsStream(ctx *gin.Context) {
 	req, err := url.Parse(
 		fmt.Sprintf(
 			"%s://%s/hls/%s/%s",
-			url.Scheme,
-			url.Host,
+			redirect.Scheme,
+			redirect.Host,
 			ctx.Param("token"),
 			ctx.Param("chunk"),
 		),
@@ -62,13 +62,18 @@ func (c *Config) xtreamHlsStream(ctx *gin.Context) {
 		return
 	}
 
-	c.xtreamStream(ctx, req)
+	c.xtreamStream(ctx, req, redirect.resolvedUser)
 }
 
 func (c *Config) xtreamHlsrStream(ctx *gin.Context) {
+	ru, ok := c.resolveFromPath(ctx)
+	if !ok {
+		return
+	}
+
 	channel := ctx.Param("channel")
 
-	url, err := c.getHlsRedirectURL(channel)
+	redirect, err := c.getHlsRedirectURL(channel)
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
@@ -77,11 +82,11 @@ func (c *Config) xtreamHlsrStream(ctx *gin.Context) {
 	req, err := url.Parse(
 		fmt.Sprintf(
 			"%s://%s/hlsr/%s/%s/%s/%s/%s/%s",
-			url.Scheme,
-			url.Host,
+			redirect.Scheme,
+			redirect.Host,
 			ctx.Param("token"),
-			c.XtreamUser,
-			c.XtreamPassword,
+			ru.Backend.XtreamUser,
+			ru.Backend.XtreamPassword,
 			ctx.Param("channel"),
 			ctx.Param("hash"),
 			ctx.Param("chunk"),
@@ -93,22 +98,22 @@ func (c *Config) xtreamHlsrStream(ctx *gin.Context) {
 		return
 	}
 
-	c.xtreamStream(ctx, req)
+	c.xtreamStream(ctx, req, ru)
 }
 
-func (c *Config) getHlsRedirectURL(channel string) (*url.URL, error) {
+func (c *Config) getHlsRedirectURL(channel string) (hlsRedirect, error) {
 	c.hlsChannelsRedirectURLLock.RLock()
 	defer c.hlsChannelsRedirectURLLock.RUnlock()
 
-	url, ok := c.hlsChannelsRedirectURL[channel+".m3u8"]
+	redirect, ok := c.hlsChannelsRedirectURL[channel+".m3u8"]
 	if !ok {
-		return nil, errors.New("HSL redirect url not found")
+		return hlsRedirect{}, errors.New("HSL redirect url not found")
 	}
 
-	return &url, nil
+	return redirect, nil
 }
 
-func (c *Config) hlsXtreamStream(ctx *gin.Context, oriURL *url.URL) {
+func (c *Config) hlsXtreamStream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -139,7 +144,7 @@ func (c *Config) hlsXtreamStream(ctx *gin.Context, oriURL *url.URL) {
 		id := ctx.Param("id")
 		if strings.Contains(location.String(), id) {
 			c.hlsChannelsRedirectURLLock.Lock()
-			c.hlsChannelsRedirectURL[id] = *location
+			c.hlsChannelsRedirectURL[id] = hlsRedirect{URL: *location, resolvedUser: ru}
 			c.hlsChannelsRedirectURLLock.Unlock()
 
 			hlsReq, err := http.NewRequestWithContext(ctx.Request.Context(), "GET", location.String(), nil)
@@ -163,7 +168,7 @@ func (c *Config) hlsXtreamStream(ctx *gin.Context, oriURL *url.URL) {
 				return
 			}
 			body := string(b)
-			body = strings.ReplaceAll(body, "/"+c.XtreamUser.String()+"/"+c.XtreamPassword.String()+"/", "/"+c.User.String()+"/"+c.Password.String()+"/")
+			body = strings.ReplaceAll(body, "/"+ru.Backend.XtreamUser+"/"+ru.Backend.XtreamPassword+"/", "/"+ru.ProxyUser+"/"+ru.ProxyPassword+"/")
 
 			mergeHttpHeader(ctx.Writer.Header(), hlsResp.Header)
 

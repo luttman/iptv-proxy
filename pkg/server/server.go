@@ -24,108 +24,81 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-contrib/cors"
-	"github.com/google/uuid"
 	"github.com/jamesnetherton/m3u"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
 
 	"github.com/gin-gonic/gin"
 )
-
-var defaultProxyfiedM3UPath = filepath.Join(os.TempDir(), uuid.New().String()+".iptv-proxy.m3u")
-var endpointAntiColision = strings.Split(uuid.New().String(), "-")[0]
 
 type cacheMeta struct {
 	string
 	time.Time
 }
 
-// Config represent the server configuration
+// hlsRedirect remembers, for a given HLS token, both the upstream
+// redirect location and which proxy user/backend resolved it — the
+// chunk follow-up requests (/hls/:token/:chunk) carry no credentials
+// of their own.
+type hlsRedirect struct {
+	url.URL
+	resolvedUser
+}
+
+// Config represents the server configuration. A single Config serves
+// every proxy user; per-user/per-backend identity is resolved per
+// request from Store, never stored on Config itself.
 type Config struct {
 	*config.ProxyConfig
 
-	// M3U service part
-	playlist *m3u.Playlist
-	// this variable is set only for m3u proxy endpoints
-	track *m3u.Track
-	// path to the proxyfied m3u file
-	proxyfiedM3UPath string
+	Store *store.Store
 
-	endpointAntiColision string
+	// Router is exposed so other packages (the admin UI) can mount
+	// additional routes on the same Gin engine before Serve is called.
+	Router *gin.Engine
 
-	hlsChannelsRedirectURL     map[string]url.URL
+	hlsChannelsRedirectURL     map[string]hlsRedirect
 	hlsChannelsRedirectURLLock sync.RWMutex
 
 	xtreamM3uCache     map[string]cacheMeta
 	xtreamM3uCacheLock sync.RWMutex
 }
 
-// NewServer initialize a new server configuration
-func NewServer(config *config.ProxyConfig) (*Config, error) {
-	var p m3u.Playlist
-	if config.RemoteURL.String() != "" {
-		var err error
-		p, err = m3u.Parse(config.RemoteURL.String())
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if trimmedCustomId := strings.Trim(config.CustomId, "/"); trimmedCustomId != "" {
-		endpointAntiColision = trimmedCustomId
-	}
-
-	return &Config{
-		ProxyConfig:            config,
-		playlist:               &p,
-		proxyfiedM3UPath:       defaultProxyfiedM3UPath,
-		endpointAntiColision:   endpointAntiColision,
-		hlsChannelsRedirectURL: map[string]url.URL{},
+// NewServer initializes a new server configuration backed by st.
+func NewServer(conf *config.ProxyConfig, st *store.Store) (*Config, error) {
+	c := &Config{
+		ProxyConfig:            conf,
+		Store:                  st,
+		hlsChannelsRedirectURL: map[string]hlsRedirect{},
 		xtreamM3uCache:         map[string]cacheMeta{},
-	}, nil
-}
-
-// Serve the iptv-proxy api
-func (c *Config) Serve() error {
-	if err := c.playlistInitialization(); err != nil {
-		return err
 	}
 
 	router := gin.Default()
 	router.Use(cors.Default())
-	group := router.Group("/")
-	c.routes(group)
+	c.routes(router.Group("/"))
+	c.Router = router
 
-	return router.Run(fmt.Sprintf(":%d", c.HostConfig.Port))
+	return c, nil
 }
 
-func (c *Config) playlistInitialization() error {
-	if len(c.playlist.Tracks) == 0 {
-		return nil
-	}
-
-	f, err := os.Create(c.proxyfiedM3UPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	return c.marshallInto(f, false)
+// Serve the iptv-proxy api
+func (c *Config) Serve() error {
+	return c.Router.Run(fmt.Sprintf(":%d", c.HostConfig.Port))
 }
 
-// MarshallInto a *bufio.Writer a Playlist.
-func (c *Config) marshallInto(into *os.File, xtream bool) error {
-	filteredTrack := make([]m3u.Track, 0, len(c.playlist.Tracks))
+// marshallInto writes playlist as an M3U file into into, rewriting
+// every track's upstream xtream credentials to ru's proxy-facing
+// credentials.
+func (c *Config) marshallInto(into *os.File, playlist *m3u.Playlist, ru resolvedUser) error {
+	filteredTrack := make([]m3u.Track, 0, len(playlist.Tracks))
 
-	ret := 0
 	into.WriteString("#EXTM3U\n") // nolint: errcheck
-	for i, track := range c.playlist.Tracks {
+	for _, track := range playlist.Tracks {
 		var buffer bytes.Buffer
 
 		buffer.WriteString("#EXTINF:")                       // nolint: errcheck
@@ -138,9 +111,8 @@ func (c *Config) marshallInto(into *os.File, xtream bool) error {
 			buffer.WriteString(fmt.Sprintf("%s=%q ", track.Tags[i].Name, track.Tags[i].Value)) // nolint: errcheck
 		}
 
-		uri, err := c.replaceURL(track.URI, i-ret, xtream)
+		uri, err := c.replaceURL(track.URI, ru)
 		if err != nil {
-			ret++
 			slog.Error("track", "name", track.Name, "error", err)
 			continue
 		}
@@ -149,13 +121,15 @@ func (c *Config) marshallInto(into *os.File, xtream bool) error {
 
 		filteredTrack = append(filteredTrack, track)
 	}
-	c.playlist.Tracks = filteredTrack
+	playlist.Tracks = filteredTrack
 
 	return into.Sync()
 }
 
-// ReplaceURL replace original playlist url by proxy url
-func (c *Config) replaceURL(uri string, trackIndex int, xtream bool) (string, error) {
+// replaceURL rewrites an upstream xtream track URL so that it points
+// back at this proxy using ru's proxy-facing credentials instead of
+// the upstream backend's credentials.
+func (c *Config) replaceURL(uri string, ru resolvedUser) (string, error) {
 	oriURL, err := url.Parse(uri)
 	if err != nil {
 		return "", err
@@ -172,12 +146,8 @@ func (c *Config) replaceURL(uri string, trackIndex int, xtream bool) (string, er
 	}
 
 	uriPath := oriURL.EscapedPath()
-	if xtream {
-		uriPath = strings.ReplaceAll(uriPath, c.XtreamUser.PathEscape(), c.User.PathEscape())
-		uriPath = strings.ReplaceAll(uriPath, c.XtreamPassword.PathEscape(), c.Password.PathEscape())
-	} else {
-		uriPath = path.Join("/", c.endpointAntiColision, c.User.PathEscape(), c.Password.PathEscape(), fmt.Sprintf("%d", trackIndex), path.Base(uriPath))
-	}
+	uriPath = strings.ReplaceAll(uriPath, url.PathEscape(ru.Backend.XtreamUser), url.PathEscape(ru.ProxyUser))
+	uriPath = strings.ReplaceAll(uriPath, url.PathEscape(ru.Backend.XtreamPassword), url.PathEscape(ru.ProxyPassword))
 
 	basicAuth := oriURL.User.String()
 	if basicAuth != "" {

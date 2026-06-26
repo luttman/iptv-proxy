@@ -21,12 +21,12 @@ package cmd
 import (
 	"fmt"
 	"log"
-	"log/slog"
-	"net/url"
 	"os"
 	"strings"
 
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/admin"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
 
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/server"
 
@@ -40,33 +40,17 @@ var cfgFile string
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "iptv-proxy",
-	Short: "Reverse proxy on iptv m3u file and xtream codes server api",
+	Short: "Reverse proxy on xtream codes server api, with multi-user/multi-backend admin UI",
 	Run: func(cmd *cobra.Command, args []string) {
-		m3uURL := viper.GetString("m3u-url")
-		remoteHostURL, err := url.Parse(m3uURL)
+		adminUser := viper.GetString("admin-user")
+		adminPassword := viper.GetString("admin-password")
+		if adminUser == "" || adminPassword == "" {
+			log.Fatal("--admin-user and --admin-password (or ADMIN_USER/ADMIN_PASSWORD) are required")
+		}
+
+		st, err := store.Open(viper.GetString("db-path"))
 		if err != nil {
 			log.Fatal(err)
-		}
-
-		xtreamUser := viper.GetString("xtream-user")
-		xtreamPassword := viper.GetString("xtream-password")
-		xtreamBaseURL := viper.GetString("xtream-base-url")
-
-		var username, password string
-		if strings.Contains(m3uURL, "/get.php") {
-			username = remoteHostURL.Query().Get("username")
-			password = remoteHostURL.Query().Get("password")
-		}
-
-		if xtreamBaseURL == "" && xtreamPassword == "" && xtreamUser == "" {
-			if username != "" && password != "" {
-				slog.Info("it seems you are using an Xtream provider")
-
-				xtreamUser = username
-				xtreamPassword = password
-				xtreamBaseURL = fmt.Sprintf("%s://%s", remoteHostURL.Scheme, remoteHostURL.Host)
-				slog.Info("xtream service enabled", "xtream_base_url", xtreamBaseURL, "xtream_username", xtreamUser)
-			}
 		}
 
 		conf := &config.ProxyConfig{
@@ -74,18 +58,11 @@ var rootCmd = &cobra.Command{
 				Hostname: viper.GetString("hostname"),
 				Port:     viper.GetInt("port"),
 			},
-			RemoteURL:            remoteHostURL,
-			XtreamUser:           config.CredentialString(xtreamUser),
-			XtreamPassword:       config.CredentialString(xtreamPassword),
-			XtreamBaseURL:        xtreamBaseURL,
 			M3UCacheExpiration:   viper.GetInt("m3u-cache-expiration"),
-			User:                 config.CredentialString(viper.GetString("user")),
-			Password:             config.CredentialString(viper.GetString("password")),
 			AdvertisedPort:       viper.GetInt("advertised-port"),
 			HTTPS:                viper.GetBool("https"),
 			M3UFileName:          viper.GetString("m3u-file-name"),
 			CustomEndpoint:       viper.GetString("custom-endpoint"),
-			CustomId:             viper.GetString("custom-id"),
 			XtreamGenerateApiGet: viper.GetBool("xtream-api-get"),
 		}
 
@@ -93,12 +70,16 @@ var rootCmd = &cobra.Command{
 			conf.AdvertisedPort = conf.HostConfig.Port
 		}
 
-		server, err := server.NewServer(conf)
+		srv, err := server.NewServer(conf, st)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		if e := server.Serve(); e != nil {
+		if err := admin.Register(srv, admin.Credentials{Username: adminUser, Password: adminPassword}); err != nil {
+			log.Fatal(err)
+		}
+
+		if e := srv.Serve(); e != nil {
 			log.Fatal(e)
 		}
 	},
@@ -120,19 +101,15 @@ func init() {
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "iptv-proxy-config", "C", "Config file (default is $HOME/.iptv-proxy.yaml)")
-	rootCmd.Flags().StringP("m3u-url", "u", "", `Iptv m3u file or url e.g: "http://example.com/iptv.m3u"`)
-	rootCmd.Flags().StringP("m3u-file-name", "", "iptv.m3u", `Name of the new proxified m3u file e.g "http://poxy.com/iptv.m3u"`)
-	rootCmd.Flags().StringP("custom-endpoint", "", "", `Custom endpoint "http://poxy.com/<custom-endpoint>/iptv.m3u"`)
-	rootCmd.Flags().StringP("custom-id", "", "", `Custom anti-collison ID for each track "http://proxy.com/<custom-id>/..."`)
+	rootCmd.Flags().StringP("db-path", "", "./iptv-proxy.db", "Path to the SQLite database file storing users and xtream-code backends")
+	rootCmd.Flags().StringP("admin-user", "", "", "Admin username for the /admin management UI (required)")
+	rootCmd.Flags().StringP("admin-password", "", "", "Admin password for the /admin management UI (required)")
+	rootCmd.Flags().StringP("m3u-file-name", "", "iptv.m3u", `Name of the proxified m3u file e.g "http://proxy.com/iptv.m3u"`)
+	rootCmd.Flags().StringP("custom-endpoint", "", "", `Custom endpoint "http://proxy.com/<custom-endpoint>/iptv.m3u"`)
 	rootCmd.Flags().Int("port", 8080, "Iptv-proxy listening port")
 	rootCmd.Flags().Int("advertised-port", 0, "Port to expose the IPTV file and xtream (by default, it's taking value from port) useful to put behind a reverse proxy")
 	rootCmd.Flags().String("hostname", "", "Hostname or IP to expose the IPTVs endpoints")
 	rootCmd.Flags().BoolP("https", "", false, "Activate https for urls proxy")
-	rootCmd.Flags().String("user", "usertest", "User auth to access proxy (m3u/xtream)")
-	rootCmd.Flags().String("password", "passwordtest", "Password auth to access proxy (m3u/xtream)")
-	rootCmd.Flags().String("xtream-user", "", "Xtream-code user login")
-	rootCmd.Flags().String("xtream-password", "", "Xtream-code password login")
-	rootCmd.Flags().String("xtream-base-url", "", "Xtream-code base url e.g(http://expample.tv:8080)")
 	rootCmd.Flags().Int("m3u-cache-expiration", 1, "M3U cache expiration in hour")
 	rootCmd.Flags().BoolP("xtream-api-get", "", false, "Generate get.php from xtream API instead of get.php original endpoint")
 

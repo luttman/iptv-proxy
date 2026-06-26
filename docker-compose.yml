@@ -5,29 +5,24 @@ services:
       context: .
       dockerfile: Dockerfile
     volumes:
-      # If your are using local m3u file instead of m3u remote file
-      # put your m3u file in this folder
-      - ./iptv:/root/iptv
+      # SQLite database holding users and xtream-code backends.
+      # Mounted as a directory so the file survives container recreation.
+      - ./data:/data
     container_name: "iptv-proxy"
     restart: on-failure
     ports:
        # have to be the same as ENV variable PORT
       - 8080:8080
     environment:
-      # if you are using m3u remote file
-      # M3U_URL: https://example.com/iptvfile.m3u
-      M3U_URL: /root/iptv/iptv.m3u
+      # Path to the SQLite database (must be inside the /data volume above)
+      DB_PATH: /data/iptv-proxy.db
       # Port to expose the IPTVs endpoints
       PORT: 8080
       # Hostname or IP to expose the IPTVs endpoints (for machine not for docker)
       HOSTNAME: localhost
       GIN_MODE: release
-      ## Xtream-code proxy configuration
-      XTREAM_USER: xtream_user
-      XTREAM_PASSWORD: xtream_password
-      XTREAM_BASE_URL: "http://example.tv:8080"
-      ##### UNSAFE AUTH TODO ADD REAL AUTH
-      #will be used for m3u and xtream auth poxy
-      USER: test
-      PASSWORD: testpassword
+      # Admin login for the /admin management UI, where xtream-code
+      # backends and proxy users are created/edited/deleted.
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: change-me
 

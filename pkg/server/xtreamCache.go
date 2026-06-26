@@ -34,16 +34,9 @@ import (
 	xtreamapi "github.com/pierre-emmanuelJ/iptv-proxy/pkg/xtream-proxy"
 )
 
-func (c *Config) cacheXtreamM3u(playlist *m3u.Playlist, cacheName string) error {
+func (c *Config) cacheXtreamM3u(playlist *m3u.Playlist, cacheName string, ru resolvedUser) error {
 	c.xtreamM3uCacheLock.Lock()
 	defer c.xtreamM3uCacheLock.Unlock()
-
-	tmp := &Config{
-		ProxyConfig:          c.ProxyConfig,
-		playlist:             playlist,
-		track:                c.track,
-		endpointAntiColision: c.endpointAntiColision,
-	}
 
 	path := filepath.Join(os.TempDir(), uuid.New().String()+".iptv-proxy.m3u")
 	f, err := os.Create(path)
@@ -52,7 +45,7 @@ func (c *Config) cacheXtreamM3u(playlist *m3u.Playlist, cacheName string) error 
 	}
 	defer f.Close()
 
-	if err := tmp.marshallInto(f, true); err != nil {
+	if err := c.marshallInto(f, playlist, ru); err != nil {
 		return err
 	}
 	c.xtreamM3uCache[cacheName] = cacheMeta{path, time.Now()}
@@ -60,8 +53,8 @@ func (c *Config) cacheXtreamM3u(playlist *m3u.Playlist, cacheName string) error 
 	return nil
 }
 
-func (c *Config) xtreamGenerateM3u(ctx *gin.Context, extension string) (*m3u.Playlist, error) {
-	client, err := xtreamapi.New(ctx.Request.Context(), c.XtreamUser.String(), c.XtreamPassword.String(), c.XtreamBaseURL, ctx.Request.UserAgent())
+func (c *Config) xtreamGenerateM3u(ctx *gin.Context, extension string, ru resolvedUser) (*m3u.Playlist, error) {
+	client, err := xtreamapi.New(ctx.Request.Context(), ru.Backend.XtreamUser, ru.Backend.XtreamPassword, ru.Backend.BaseURL, ctx.Request.UserAgent())
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +98,7 @@ func (c *Config) xtreamGenerateM3u(ctx *gin.Context, extension string) (*m3u.Pla
 				track.Tags = append(track.Tags, m3u.Tag{Name: "group-title", Value: category.Name})
 			}
 
-			track.URI = fmt.Sprintf("%s/%s%s/%s/%s%s", c.XtreamBaseURL, prefix, c.XtreamUser, c.XtreamPassword, fmt.Sprint(stream.ID), extension)
+			track.URI = fmt.Sprintf("%s/%s%s/%s/%s%s", ru.Backend.BaseURL, prefix, ru.Backend.XtreamUser, ru.Backend.XtreamPassword, fmt.Sprint(stream.ID), extension)
 			playlist.Tracks = append(playlist.Tracks, track)
 		}
 	}
@@ -113,23 +106,14 @@ func (c *Config) xtreamGenerateM3u(ctx *gin.Context, extension string) (*m3u.Pla
 	return playlist, nil
 }
 
-func (c *Config) xtreamGetAuto(ctx *gin.Context) {
-	newQuery := ctx.Request.URL.Query()
-	q := c.RemoteURL.Query()
-	for k, v := range q {
-		if k == "username" || k == "password" {
-			continue
-		}
-
-		newQuery.Add(k, strings.Join(v, ","))
-	}
-	ctx.Request.URL.RawQuery = newQuery.Encode()
-
-	c.xtreamGet(ctx)
-}
-
 func (c *Config) xtreamGet(ctx *gin.Context) {
-	rawURL := fmt.Sprintf("%s/get.php?username=%s&password=%s", c.XtreamBaseURL, c.XtreamUser, c.XtreamPassword)
+	ru, ok := resolvedUserFromCtx(ctx)
+	if !ok {
+		ctx.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	rawURL := fmt.Sprintf("%s/get.php?username=%s&password=%s", ru.Backend.BaseURL, ru.Backend.XtreamUser, ru.Backend.XtreamPassword)
 
 	q := ctx.Request.URL.Query()
 
@@ -147,8 +131,10 @@ func (c *Config) xtreamGet(ctx *gin.Context) {
 		return
 	}
 
+	cacheName := ru.ProxyUser + "|" + m3uURL.String()
+
 	c.xtreamM3uCacheLock.RLock()
-	meta, ok := c.xtreamM3uCache[m3uURL.String()]
+	meta, ok := c.xtreamM3uCache[cacheName]
 	d := time.Since(meta.Time)
 	if !ok || d.Hours() >= float64(c.M3UCacheExpiration) {
 		slog.Info("xtream cache m3u file", "client", ctx.ClientIP())
@@ -158,7 +144,7 @@ func (c *Config) xtreamGet(ctx *gin.Context) {
 			ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 			return
 		}
-		if err := c.cacheXtreamM3u(&playlist, m3uURL.String()); err != nil {
+		if err := c.cacheXtreamM3u(&playlist, cacheName, ru); err != nil {
 			ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 			return
 		}
@@ -168,7 +154,7 @@ func (c *Config) xtreamGet(ctx *gin.Context) {
 
 	ctx.Header("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, c.M3UFileName))
 	c.xtreamM3uCacheLock.RLock()
-	path := c.xtreamM3uCache[m3uURL.String()].string
+	path := c.xtreamM3uCache[cacheName].string
 	c.xtreamM3uCacheLock.RUnlock()
 	ctx.Header("Content-Type", "application/octet-stream")
 
@@ -176,13 +162,19 @@ func (c *Config) xtreamGet(ctx *gin.Context) {
 }
 
 func (c *Config) xtreamApiGet(ctx *gin.Context) {
+	ru, ok := resolvedUserFromCtx(ctx)
+	if !ok {
+		ctx.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
 	const (
 		apiGet = "apiget"
 	)
 
 	var (
 		extension = ctx.Query("output")
-		cacheName = apiGet + extension
+		cacheName = ru.ProxyUser + "|" + apiGet + extension
 	)
 
 	c.xtreamM3uCacheLock.RLock()
@@ -191,12 +183,12 @@ func (c *Config) xtreamApiGet(ctx *gin.Context) {
 	if !ok || d.Hours() >= float64(c.M3UCacheExpiration) {
 		slog.Info("xtream cache API m3u file", "client", ctx.ClientIP())
 		c.xtreamM3uCacheLock.RUnlock()
-		playlist, err := c.xtreamGenerateM3u(ctx, extension)
+		playlist, err := c.xtreamGenerateM3u(ctx, extension, ru)
 		if err != nil {
 			ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 			return
 		}
-		if err := c.cacheXtreamM3u(playlist, cacheName); err != nil {
+		if err := c.cacheXtreamM3u(playlist, cacheName, ru); err != nil {
 			ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 			return
 		}

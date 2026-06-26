@@ -49,18 +49,24 @@ func (c *Config) xtreamPlayerAPIPOST(ctx *gin.Context) {
 }
 
 func (c *Config) xtreamPlayerAPI(ctx *gin.Context, q url.Values) {
+	ru, ok := resolvedUserFromCtx(ctx)
+	if !ok {
+		ctx.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
 	var action string
 	if len(q["action"]) > 0 {
 		action = q["action"][0]
 	}
 
-	client, err := xtreamapi.New(ctx.Request.Context(), c.XtreamUser.String(), c.XtreamPassword.String(), c.XtreamBaseURL, ctx.Request.UserAgent())
+	client, err := xtreamapi.New(ctx.Request.Context(), ru.Backend.XtreamUser, ru.Backend.XtreamPassword, ru.Backend.BaseURL, ctx.Request.UserAgent())
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
 	}
 
-	resp, httpcode, err := client.Action(c.ProxyConfig, action, q)
+	resp, httpcode, err := client.Action(ru.ProxyUser, ru.ProxyPassword, c.HostConfig, c.HTTPS, c.AdvertisedPort, action, q)
 	if err != nil {
 		ctx.AbortWithError(httpcode, err) // nolint: errcheck
 		return
@@ -72,7 +78,13 @@ func (c *Config) xtreamPlayerAPI(ctx *gin.Context, q url.Values) {
 }
 
 func (c *Config) xtreamXMLTV(ctx *gin.Context) {
-	client, err := xtreamapi.New(ctx.Request.Context(), c.XtreamUser.String(), c.XtreamPassword.String(), c.XtreamBaseURL, ctx.Request.UserAgent())
+	ru, ok := resolvedUserFromCtx(ctx)
+	if !ok {
+		ctx.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	client, err := xtreamapi.New(ctx.Request.Context(), ru.Backend.XtreamUser, ru.Backend.XtreamPassword, ru.Backend.BaseURL, ctx.Request.UserAgent())
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return

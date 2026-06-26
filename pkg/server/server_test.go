@@ -21,49 +21,57 @@ package server
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jamesnetherton/m3u"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
 )
 
-func newTestConfig() *Config {
+func newTestConfig(t *testing.T) *Config {
+	t.Helper()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open() error: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
 	return &Config{
 		ProxyConfig: &config.ProxyConfig{
 			HostConfig: &config.HostConfiguration{
 				Hostname: "proxy.example.com",
 				Port:     8080,
 			},
-			XtreamUser:     "xuser",
-			XtreamPassword: "xpass",
-			User:           "puser",
-			Password:       "ppass",
 			AdvertisedPort: 8080,
 		},
-		playlist:             &m3u.Playlist{},
-		endpointAntiColision: "abc123",
+		Store:                  st,
+		hlsChannelsRedirectURL: map[string]hlsRedirect{},
+		xtreamM3uCache:         map[string]cacheMeta{},
 	}
 }
 
-func TestReplaceURL_NonXtream(t *testing.T) {
-	c := newTestConfig()
-
-	got, err := c.replaceURL("http://origin.example.com/stream/channel.ts", 3, false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := "http://proxy.example.com:8080/abc123/puser/ppass/3/channel.ts"
-	if got != want {
-		t.Errorf("replaceURL() = %q, want %q", got, want)
+func testResolvedUser() resolvedUser {
+	return resolvedUser{
+		ProxyUser:     "puser",
+		ProxyPassword: "ppass",
+		Backend: store.XtreamCode{
+			ID:             1,
+			Name:           "provider-a",
+			BaseURL:        "http://origin.example.com",
+			XtreamUser:     "xuser",
+			XtreamPassword: "xpass",
+		},
 	}
 }
 
 func TestReplaceURL_Xtream(t *testing.T) {
-	c := newTestConfig()
+	c := newTestConfig(t)
+	ru := testResolvedUser()
 
-	got, err := c.replaceURL("http://origin.example.com/xuser/xpass/123.ts", 0, true)
+	got, err := c.replaceURL("http://origin.example.com/xuser/xpass/123.ts", ru)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,10 +85,11 @@ func TestReplaceURL_Xtream(t *testing.T) {
 }
 
 func TestReplaceURL_HTTPS(t *testing.T) {
-	c := newTestConfig()
+	c := newTestConfig(t)
 	c.HTTPS = true
+	ru := testResolvedUser()
 
-	got, err := c.replaceURL("http://origin.example.com/stream/channel.ts", 0, false)
+	got, err := c.replaceURL("http://origin.example.com/xuser/xpass/123.ts", ru)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,28 +100,30 @@ func TestReplaceURL_HTTPS(t *testing.T) {
 }
 
 func TestReplaceURL_CustomEndpoint(t *testing.T) {
-	c := newTestConfig()
+	c := newTestConfig(t)
 	c.CustomEndpoint = "/myendpoint/"
+	ru := testResolvedUser()
 
-	got, err := c.replaceURL("http://origin.example.com/stream/channel.ts", 0, false)
+	got, err := c.replaceURL("http://origin.example.com/xuser/xpass/123.ts", ru)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	want := "http://proxy.example.com:8080/myendpoint/abc123/puser/ppass/0/channel.ts"
+	want := "http://proxy.example.com:8080/myendpoint/puser/ppass/123.ts"
 	if got != want {
 		t.Errorf("replaceURL() = %q, want %q", got, want)
 	}
 }
 
 func TestMarshallInto(t *testing.T) {
-	c := newTestConfig()
-	c.playlist = &m3u.Playlist{
+	c := newTestConfig(t)
+	ru := testResolvedUser()
+	playlist := &m3u.Playlist{
 		Tracks: []m3u.Track{
 			{
 				Name:   "Channel One",
 				Length: -1,
-				URI:    "http://origin.example.com/stream/one.ts",
+				URI:    "http://origin.example.com/xuser/xpass/one.ts",
 				Tags: []m3u.Tag{
 					{Name: "tvg-id", Value: "one"},
 				},
@@ -126,7 +137,7 @@ func TestMarshallInto(t *testing.T) {
 	}
 	defer f.Close()
 
-	if err := c.marshallInto(f, false); err != nil {
+	if err := c.marshallInto(f, playlist, ru); err != nil {
 		t.Fatalf("marshallInto() error: %v", err)
 	}
 
@@ -144,17 +155,18 @@ func TestMarshallInto(t *testing.T) {
 	if !strings.Contains(string(contents), "proxy.example.com:8080") {
 		t.Errorf("marshallInto() output missing rewritten host, got %q", contents)
 	}
-	if len(c.playlist.Tracks) != 1 {
-		t.Errorf("marshallInto() filtered out a valid track, len=%d", len(c.playlist.Tracks))
+	if len(playlist.Tracks) != 1 {
+		t.Errorf("marshallInto() filtered out a valid track, len=%d", len(playlist.Tracks))
 	}
 }
 
 func TestMarshallInto_DropsTracksWithInvalidURI(t *testing.T) {
-	c := newTestConfig()
-	c.playlist = &m3u.Playlist{
+	c := newTestConfig(t)
+	ru := testResolvedUser()
+	playlist := &m3u.Playlist{
 		Tracks: []m3u.Track{
 			{Name: "Bad", Length: -1, URI: "http://[::1]:namedport/bad"},
-			{Name: "Good", Length: -1, URI: "http://origin.example.com/stream/good.ts"},
+			{Name: "Good", Length: -1, URI: "http://origin.example.com/xuser/xpass/good.ts"},
 		},
 	}
 
@@ -164,14 +176,14 @@ func TestMarshallInto_DropsTracksWithInvalidURI(t *testing.T) {
 	}
 	defer f.Close()
 
-	if err := c.marshallInto(f, false); err != nil {
+	if err := c.marshallInto(f, playlist, ru); err != nil {
 		t.Fatalf("marshallInto() error: %v", err)
 	}
 
-	if len(c.playlist.Tracks) != 1 {
-		t.Fatalf("expected 1 surviving track, got %d", len(c.playlist.Tracks))
+	if len(playlist.Tracks) != 1 {
+		t.Fatalf("expected 1 surviving track, got %d", len(playlist.Tracks))
 	}
-	if c.playlist.Tracks[0].Name != "Good" {
-		t.Errorf("expected surviving track to be %q, got %q", "Good", c.playlist.Tracks[0].Name)
+	if playlist.Tracks[0].Name != "Good" {
+		t.Errorf("expected surviving track to be %q, got %q", "Good", playlist.Tracks[0].Name)
 	}
 }

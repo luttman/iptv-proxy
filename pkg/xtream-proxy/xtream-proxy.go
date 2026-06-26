@@ -94,9 +94,9 @@ func (c *Client) login(proxyUser, proxyPassword, proxyURL string, proxyPort int,
 }
 
 // Action execute an xtream action.
-func (c *Client) Action(config *config.ProxyConfig, action string, q url.Values) (respBody interface{}, httpcode int, err error) {
+func (c *Client) Action(proxyUser, proxyPassword string, hostConfig *config.HostConfiguration, https bool, advertisedPort int, action string, q url.Values) (respBody interface{}, httpcode int, err error) {
 	protocol := "http"
-	if config.HTTPS {
+	if https {
 		protocol = "https"
 	}
 
@@ -159,7 +159,7 @@ func (c *Client) Action(config *config.ProxyConfig, action string, q url.Values)
 		}
 		respBody, err = c.GetEPG(q["stream_id"][0])
 	default:
-		respBody, err = c.login(config.User.String(), config.Password.String(), protocol+"://"+config.HostConfig.Hostname, config.AdvertisedPort, protocol)
+		respBody, err = c.login(proxyUser, proxyPassword, protocol+"://"+hostConfig.Hostname, advertisedPort, protocol)
 	}
 
 	return

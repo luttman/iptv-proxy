@@ -27,44 +27,64 @@ import (
 )
 
 func (c *Config) xtreamStreamHandler(ctx *gin.Context) {
+	ru, ok := c.resolveFromPath(ctx)
+	if !ok {
+		return
+	}
+
 	id := ctx.Param("id")
-	rpURL, err := url.Parse(fmt.Sprintf("%s/%s/%s/%s", c.XtreamBaseURL, c.XtreamUser, c.XtreamPassword, id))
+	rpURL, err := url.Parse(fmt.Sprintf("%s/%s/%s/%s", ru.Backend.BaseURL, ru.Backend.XtreamUser, ru.Backend.XtreamPassword, id))
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
 	}
 
-	c.xtreamStream(ctx, rpURL)
+	c.xtreamStream(ctx, rpURL, ru)
 }
 
 func (c *Config) xtreamStreamLive(ctx *gin.Context) {
+	ru, ok := c.resolveFromPath(ctx)
+	if !ok {
+		return
+	}
+
 	id := ctx.Param("id")
-	rpURL, err := url.Parse(fmt.Sprintf("%s/live/%s/%s/%s", c.XtreamBaseURL, c.XtreamUser, c.XtreamPassword, id))
+	rpURL, err := url.Parse(fmt.Sprintf("%s/live/%s/%s/%s", ru.Backend.BaseURL, ru.Backend.XtreamUser, ru.Backend.XtreamPassword, id))
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
 	}
 
-	c.xtreamStream(ctx, rpURL)
+	c.xtreamStream(ctx, rpURL, ru)
 }
 
 func (c *Config) xtreamStreamPlay(ctx *gin.Context) {
+	ru, ok := c.resolveFromPath(ctx)
+	if !ok {
+		return
+	}
+
 	token := ctx.Param("token")
 	t := ctx.Param("type")
-	rpURL, err := url.Parse(fmt.Sprintf("%s/play/%s/%s", c.XtreamBaseURL, token, t))
+	rpURL, err := url.Parse(fmt.Sprintf("%s/play/%s/%s", ru.Backend.BaseURL, token, t))
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
 	}
 
-	c.xtreamStream(ctx, rpURL)
+	c.xtreamStream(ctx, rpURL, ru)
 }
 
 func (c *Config) xtreamStreamTimeshift(ctx *gin.Context) {
+	ru, ok := c.resolveFromPath(ctx)
+	if !ok {
+		return
+	}
+
 	duration := ctx.Param("duration")
 	start := ctx.Param("start")
 	id := ctx.Param("id")
-	rpURL, err := url.Parse(fmt.Sprintf("%s/timeshift/%s/%s/%s/%s/%s", c.XtreamBaseURL, c.XtreamUser, c.XtreamPassword, duration, start, id))
+	rpURL, err := url.Parse(fmt.Sprintf("%s/timeshift/%s/%s/%s/%s/%s", ru.Backend.BaseURL, ru.Backend.XtreamUser, ru.Backend.XtreamPassword, duration, start, id))
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
@@ -74,23 +94,33 @@ func (c *Config) xtreamStreamTimeshift(ctx *gin.Context) {
 }
 
 func (c *Config) xtreamStreamMovie(ctx *gin.Context) {
+	ru, ok := c.resolveFromPath(ctx)
+	if !ok {
+		return
+	}
+
 	id := ctx.Param("id")
-	rpURL, err := url.Parse(fmt.Sprintf("%s/movie/%s/%s/%s", c.XtreamBaseURL, c.XtreamUser, c.XtreamPassword, id))
+	rpURL, err := url.Parse(fmt.Sprintf("%s/movie/%s/%s/%s", ru.Backend.BaseURL, ru.Backend.XtreamUser, ru.Backend.XtreamPassword, id))
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
 	}
 
-	c.xtreamStream(ctx, rpURL)
+	c.xtreamStream(ctx, rpURL, ru)
 }
 
 func (c *Config) xtreamStreamSeries(ctx *gin.Context) {
+	ru, ok := c.resolveFromPath(ctx)
+	if !ok {
+		return
+	}
+
 	id := ctx.Param("id")
-	rpURL, err := url.Parse(fmt.Sprintf("%s/series/%s/%s/%s", c.XtreamBaseURL, c.XtreamUser, c.XtreamPassword, id))
+	rpURL, err := url.Parse(fmt.Sprintf("%s/series/%s/%s/%s", ru.Backend.BaseURL, ru.Backend.XtreamUser, ru.Backend.XtreamPassword, id))
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
 	}
 
-	c.xtreamStream(ctx, rpURL)
+	c.xtreamStream(ctx, rpURL, ru)
 }
