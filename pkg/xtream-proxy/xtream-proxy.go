@@ -48,8 +48,8 @@ type Client struct {
 }
 
 // New new xtream client
-func New(user, password, baseURL, userAgent string) (*Client, error) {
-	cli, err := xtream.NewClientWithUserAgent(context.Background(), user, password, baseURL, userAgent)
+func New(ctx context.Context, user, password, baseURL, userAgent string) (*Client, error) {
+	cli, err := xtream.NewClientWithUserAgent(ctx, user, password, baseURL, userAgent)
 	if err != nil {
 		return nil, err
 	}

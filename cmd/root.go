@@ -21,6 +21,7 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"net/url"
 	"os"
 	"strings"
@@ -59,12 +60,12 @@ var rootCmd = &cobra.Command{
 
 		if xtreamBaseURL == "" && xtreamPassword == "" && xtreamUser == "" {
 			if username != "" && password != "" {
-				log.Printf("[iptv-proxy] INFO: It's seams you are using an Xtream provider!")
+				slog.Info("it seems you are using an Xtream provider")
 
 				xtreamUser = username
 				xtreamPassword = password
 				xtreamBaseURL = fmt.Sprintf("%s://%s", remoteHostURL.Scheme, remoteHostURL.Host)
-				log.Printf("[iptv-proxy] INFO: xtream service enable with xtream base url: %q xtream username: %q xtream password: %q", xtreamBaseURL, xtreamUser, xtreamPassword)
+				slog.Info("xtream service enabled", "xtream_base_url", xtreamBaseURL, "xtream_username", xtreamUser)
 			}
 		}
 

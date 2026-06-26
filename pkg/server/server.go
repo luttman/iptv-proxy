@@ -21,23 +21,30 @@ package server
 import (
 	"bytes"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-contrib/cors"
+	"github.com/google/uuid"
 	"github.com/jamesnetherton/m3u"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
-	uuid "github.com/satori/go.uuid"
 
 	"github.com/gin-gonic/gin"
 )
 
-var defaultProxyfiedM3UPath = filepath.Join(os.TempDir(), uuid.NewV4().String()+".iptv-proxy.m3u")
-var endpointAntiColision = strings.Split(uuid.NewV4().String(), "-")[0]
+var defaultProxyfiedM3UPath = filepath.Join(os.TempDir(), uuid.New().String()+".iptv-proxy.m3u")
+var endpointAntiColision = strings.Split(uuid.New().String(), "-")[0]
+
+type cacheMeta struct {
+	string
+	time.Time
+}
 
 // Config represent the server configuration
 type Config struct {
@@ -51,6 +58,12 @@ type Config struct {
 	proxyfiedM3UPath string
 
 	endpointAntiColision string
+
+	hlsChannelsRedirectURL     map[string]url.URL
+	hlsChannelsRedirectURLLock sync.RWMutex
+
+	xtreamM3uCache     map[string]cacheMeta
+	xtreamM3uCacheLock sync.RWMutex
 }
 
 // NewServer initialize a new server configuration
@@ -64,16 +77,17 @@ func NewServer(config *config.ProxyConfig) (*Config, error) {
 		}
 	}
 
-        if trimmedCustomId := strings.Trim(config.CustomId, "/"); trimmedCustomId != "" {
-                endpointAntiColision = trimmedCustomId
-        }
+	if trimmedCustomId := strings.Trim(config.CustomId, "/"); trimmedCustomId != "" {
+		endpointAntiColision = trimmedCustomId
+	}
 
 	return &Config{
-		config,
-		&p,
-		nil,
-		defaultProxyfiedM3UPath,
-		endpointAntiColision,
+		ProxyConfig:            config,
+		playlist:               &p,
+		proxyfiedM3UPath:       defaultProxyfiedM3UPath,
+		endpointAntiColision:   endpointAntiColision,
+		hlsChannelsRedirectURL: map[string]url.URL{},
+		xtreamM3uCache:         map[string]cacheMeta{},
 	}, nil
 }
 
@@ -127,7 +141,7 @@ func (c *Config) marshallInto(into *os.File, xtream bool) error {
 		uri, err := c.replaceURL(track.URI, i-ret, xtream)
 		if err != nil {
 			ret++
-			log.Printf("ERROR: track: %s: %s", track.Name, err)
+			slog.Error("track", "name", track.Name, "error", err)
 			continue
 		}
 
