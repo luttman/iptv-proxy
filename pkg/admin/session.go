@@ -36,6 +36,7 @@ import (
 )
 
 const sessionCookieName = "iptvproxy_admin_session"
+const csrfCookieName = "iptvproxy_admin_csrf"
 const sessionTTL = 24 * time.Hour
 
 // Credentials are the single admin login, supplied at process
@@ -88,18 +89,72 @@ func (s *sessionSigner) verify(token string) bool {
 }
 
 func (a *admin) issueSession(ctx *gin.Context) {
+	ctx.SetSameSite(http.SameSiteLaxMode)
 	expiry := time.Now().Add(sessionTTL).Unix()
-	ctx.SetCookie(sessionCookieName, a.signer.sign(expiry), int(sessionTTL.Seconds()), "/admin", "", false, true)
+	ctx.SetCookie(sessionCookieName, a.signer.sign(expiry), int(sessionTTL.Seconds()), "/admin", "", a.secureCookies, true)
+	a.issueCSRFToken(ctx)
 }
 
 func (a *admin) clearSession(ctx *gin.Context) {
-	ctx.SetCookie(sessionCookieName, "", -1, "/admin", "", false, true)
+	ctx.SetSameSite(http.SameSiteLaxMode)
+	ctx.SetCookie(sessionCookieName, "", -1, "/admin", "", a.secureCookies, true)
+	ctx.SetCookie(csrfCookieName, "", -1, "/admin", "", a.secureCookies, true)
 }
 
 func (a *admin) requireSession(ctx *gin.Context) {
 	cookie, err := ctx.Cookie(sessionCookieName)
 	if err != nil || !a.signer.verify(cookie) {
 		ctx.Redirect(http.StatusFound, "/admin/login")
+		ctx.Abort()
+		return
+	}
+
+	// Defensive: guarantee a CSRF cookie exists for any authenticated
+	// page render, even if it was somehow cleared without the session
+	// cookie also being cleared.
+	if _, err := ctx.Cookie(csrfCookieName); err != nil {
+		a.issueCSRFToken(ctx)
+	}
+}
+
+// issueCSRFToken sets a fresh random CSRF token cookie and returns
+// its value. Used with the double-submit-cookie pattern: forms embed
+// this same value as a hidden field, and csrfProtect verifies the two
+// match on state-changing requests. The cookie doesn't need to be
+// readable by JS since the server (which already holds the request's
+// cookies) is the one rendering the hidden field.
+func (a *admin) issueCSRFToken(ctx *gin.Context) string {
+	raw := make([]byte, 32)
+	rand.Read(raw) // nolint: errcheck
+
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	ctx.SetSameSite(http.SameSiteLaxMode)
+	ctx.SetCookie(csrfCookieName, token, int(sessionTTL.Seconds()), "/admin", "", a.secureCookies, true)
+
+	return token
+}
+
+// csrfToken returns the current request's CSRF token, for embedding
+// into a hidden form field. requireSession guarantees the cookie is
+// present on every authenticated page render.
+func (a *admin) csrfToken(ctx *gin.Context) string {
+	token, _ := ctx.Cookie(csrfCookieName)
+	return token
+}
+
+// csrfProtect rejects state-changing requests whose csrf_token form
+// field doesn't match the csrf cookie (double-submit cookie pattern).
+func (a *admin) csrfProtect(ctx *gin.Context) {
+	cookie, err := ctx.Cookie(csrfCookieName)
+	if err != nil || cookie == "" {
+		ctx.String(http.StatusForbidden, "missing CSRF cookie")
+		ctx.Abort()
+		return
+	}
+
+	form := ctx.PostForm("csrf_token")
+	if form == "" || subtle.ConstantTimeCompare([]byte(form), []byte(cookie)) != 1 {
+		ctx.String(http.StatusForbidden, "invalid CSRF token")
 		ctx.Abort()
 		return
 	}

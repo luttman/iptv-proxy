@@ -166,6 +166,7 @@ const dashboardPage = styleBlock + themeToggle + `
     <h1>iptv-proxy admin</h1>
     <nav>
       <form class="inline" method="post" action="/admin/logout">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <button type="submit" class="btn-link" style="background:none;border:none;cursor:pointer;">Log out</button>
       </form>
     </nav>
@@ -221,6 +222,7 @@ const dashboardPage = styleBlock + themeToggle + `
         <td class="actions">
           <a class="btn-link" href="/admin/xtream-codes/{{.ID}}/edit">Edit</a>
           <form class="inline" method="post" action="/admin/xtream-codes/{{.ID}}/delete">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="btn btn-sm btn-danger">Delete</button>
           </form>
         </td>
@@ -237,26 +239,30 @@ const dashboardPage = styleBlock + themeToggle + `
       <a class="add-link" href="/admin/users/new">+ Add user</a>
     </div>
     <table>
-      <tr><th>Username</th><th>Assigned xtream code</th><th></th></tr>
+      <tr><th>Username</th><th>Assigned xtream code</th><th>Max streams</th><th></th></tr>
       {{range .Users}}
       <tr>
         <td>{{.Username}}</td>
         <td><span class="badge">{{.XtreamCodeName}}</span></td>
+        <td>{{if .MaxConcurrentStreams}}{{.MaxConcurrentStreams}}{{else}}Unlimited{{end}}</td>
         <td class="actions">
           <a class="btn-link" href="/admin/users/{{.ID}}/edit">Edit</a>
           <form class="inline" method="post" action="/admin/users/{{.ID}}/delete">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="btn btn-sm btn-danger">Delete</button>
           </form>
         </td>
       </tr>
       {{else}}
-      <tr class="empty-row"><td colspan="3">No users yet</td></tr>
+      <tr class="empty-row"><td colspan="4">No users yet</td></tr>
       {{end}}
     </table>
   </div>
 </div>
 
 <script>
+var CSRF_TOKEN = {{.CSRFToken}};
+
 function fmtDuration(seconds) {
   seconds = Math.max(0, Math.floor(seconds));
   var h = Math.floor(seconds / 3600);
@@ -300,7 +306,12 @@ function refreshStreams() {
 }
 
 function stopStream(id) {
-  fetch('/admin/streams/' + id + '/stop', { method: 'POST', credentials: 'same-origin' })
+  fetch('/admin/streams/' + id + '/stop', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'csrf_token=' + encodeURIComponent(CSRF_TOKEN)
+  })
     .then(function () { refreshStreams(); })
     .catch(function () {});
 }
@@ -324,6 +335,7 @@ const xtreamCodeFormPage = styleBlock + themeToggle + `
     <h2>{{if .ID}}Edit{{else}}New{{end}} xtream code</h2>
     {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
     <form method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>Name</label>
       <input type="text" name="name" value="{{.Name}}" required>
       <label>Base URL</label>
@@ -345,6 +357,7 @@ const userFormPage = styleBlock + themeToggle + `
     <h2>{{if .ID}}Edit{{else}}New{{end}} user</h2>
     {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
     <form method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>Username</label>
       <input type="text" name="username" value="{{.Username}}" required>
       <label>Password{{if .ID}} (leave blank to keep current){{end}}</label>
@@ -355,6 +368,8 @@ const userFormPage = styleBlock + themeToggle + `
         <option value="{{.ID}}" {{if eq .ID $.XtreamCodeID}}selected{{end}}>{{.Name}}</option>
         {{end}}
       </select>
+      <label>Max concurrent streams (0 = unlimited)</label>
+      <input type="number" name="max_concurrent_streams" value="{{.MaxConcurrentStreams}}" min="0" required>
       <button type="submit" class="btn">Save</button>
     </form>
   </div>

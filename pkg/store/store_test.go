@@ -89,7 +89,7 @@ func TestDeleteXtreamCodeInUse(t *testing.T) {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
 
-	if _, err := s.CreateUser("alice", "hunter2", xc.ID); err != nil {
+	if _, err := s.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -106,12 +106,15 @@ func TestUserCRUDAndAuthenticate(t *testing.T) {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
 
-	u, err := s.CreateUser("alice", "hunter2", xc.ID)
+	u, err := s.CreateUser("alice", "hunter2", xc.ID, 2)
 	if err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 	if u.PasswordHash == "hunter2" {
 		t.Error("expected password to be hashed, not stored in plaintext")
+	}
+	if u.MaxConcurrentStreams != 2 {
+		t.Errorf("MaxConcurrentStreams = %d, want 2", u.MaxConcurrentStreams)
 	}
 
 	gotUser, gotXC, err := s.Authenticate("alice", "hunter2")
@@ -133,7 +136,7 @@ func TestUserCRUDAndAuthenticate(t *testing.T) {
 		t.Errorf("Authenticate() with unknown user: err = %v, want ErrInvalidCredentials", err)
 	}
 
-	updated, err := s.UpdateUser(u.ID, "alice2", "", xc.ID)
+	updated, err := s.UpdateUser(u.ID, "alice2", "", xc.ID, 3)
 	if err != nil {
 		t.Fatalf("UpdateUser() error: %v", err)
 	}
@@ -142,6 +145,9 @@ func TestUserCRUDAndAuthenticate(t *testing.T) {
 	}
 	if updated.PasswordHash != u.PasswordHash {
 		t.Error("UpdateUser() with empty password should not change password hash")
+	}
+	if updated.MaxConcurrentStreams != 3 {
+		t.Errorf("UpdateUser() MaxConcurrentStreams = %d, want 3", updated.MaxConcurrentStreams)
 	}
 
 	list, err := s.ListUsers()

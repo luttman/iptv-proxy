@@ -64,6 +64,10 @@ func (t *streamTracker) start(ru resolvedUser, path string, cancel func()) int64
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	if ru.MaxConcurrentStreams > 0 {
+		t.evictOldestLocked(ru.ProxyUser, ru.MaxConcurrentStreams)
+	}
+
 	t.nextID++
 	id := t.nextID
 	t.streams[id] = streamEntry{
@@ -78,6 +82,37 @@ func (t *streamTracker) start(ru resolvedUser, path string, cancel func()) int64
 	}
 
 	return id
+}
+
+// evictOldestLocked cancels and removes the oldest active streams
+// belonging to proxyUser until fewer than limit remain, making room
+// for the stream about to be started. Caller must hold t.mu.
+func (t *streamTracker) evictOldestLocked(proxyUser string, limit int) {
+	for {
+		var oldestID int64
+		var oldestStart time.Time
+		count := 0
+		found := false
+
+		for id, e := range t.streams {
+			if e.ProxyUser != proxyUser {
+				continue
+			}
+			count++
+			if !found || e.StartedAt.Before(oldestStart) {
+				found = true
+				oldestID = id
+				oldestStart = e.StartedAt
+			}
+		}
+
+		if !found || count < limit {
+			return
+		}
+
+		t.streams[oldestID].cancel()
+		delete(t.streams, oldestID)
+	}
 }
 
 func (t *streamTracker) end(id int64) {

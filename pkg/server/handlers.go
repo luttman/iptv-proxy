@@ -32,8 +32,6 @@ import (
 )
 
 func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
-	client := &http.Client{}
-
 	// A cancelable child of the request context, so a stream can be
 	// forcibly torn down from the admin UI (some IPTV players don't
 	// cleanly close the old connection when switching channels,
@@ -49,7 +47,7 @@ func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 
 	mergeHttpHeader(req.Header, ctx.Request.Header)
 
-	resp, err := client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
@@ -107,6 +105,12 @@ type authRequest struct {
 }
 
 func (c *Config) authenticate(ctx *gin.Context) {
+	ip := ctx.ClientIP()
+	if c.authLimiter.Blocked(ip) {
+		ctx.AbortWithStatus(http.StatusTooManyRequests)
+		return
+	}
+
 	var authReq authRequest
 	if err := ctx.Bind(&authReq); err != nil {
 		ctx.AbortWithError(http.StatusBadRequest, err) // nolint: errcheck
@@ -115,14 +119,22 @@ func (c *Config) authenticate(ctx *gin.Context) {
 
 	user, xc, err := c.Store.Authenticate(authReq.Username, authReq.Password)
 	if err != nil {
+		c.authLimiter.RecordFailure(ip)
 		ctx.AbortWithStatus(http.StatusUnauthorized)
 		return
 	}
+	c.authLimiter.RecordSuccess(ip)
 
-	setResolvedUser(ctx, resolvedUser{ProxyUser: user.Username, ProxyPassword: authReq.Password, Backend: xc})
+	setResolvedUser(ctx, resolvedUser{ProxyUser: user.Username, ProxyPassword: authReq.Password, Backend: xc, MaxConcurrentStreams: user.MaxConcurrentStreams})
 }
 
 func (c *Config) appAuthenticate(ctx *gin.Context) {
+	ip := ctx.ClientIP()
+	if c.authLimiter.Blocked(ip) {
+		ctx.AbortWithStatus(http.StatusTooManyRequests)
+		return
+	}
+
 	contents, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
@@ -143,10 +155,12 @@ func (c *Config) appAuthenticate(ctx *gin.Context) {
 	username, password := q["username"][0], q["password"][0]
 	user, xc, err := c.Store.Authenticate(username, password)
 	if err != nil {
+		c.authLimiter.RecordFailure(ip)
 		ctx.AbortWithStatus(http.StatusUnauthorized)
 		return
 	}
-	setResolvedUser(ctx, resolvedUser{ProxyUser: user.Username, ProxyPassword: password, Backend: xc})
+	c.authLimiter.RecordSuccess(ip)
+	setResolvedUser(ctx, resolvedUser{ProxyUser: user.Username, ProxyPassword: password, Backend: xc, MaxConcurrentStreams: user.MaxConcurrentStreams})
 
 	ctx.Request.Body = io.NopCloser(bytes.NewReader(contents))
 }

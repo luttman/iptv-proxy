@@ -20,21 +20,32 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/jamesnetherton/m3u"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/ratelimit"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
 
 	"github.com/gin-gonic/gin"
 )
+
+// shutdownGracePeriod bounds how long Serve waits for in-flight
+// requests (including active streams) to finish after a SIGTERM/
+// SIGINT before forcibly closing remaining connections.
+const shutdownGracePeriod = 30 * time.Second
 
 type cacheMeta struct {
 	string
@@ -69,6 +80,17 @@ type Config struct {
 	xtreamM3uCacheLock sync.RWMutex
 
 	streams *streamTracker
+
+	authLimiter *ratelimit.Limiter
+
+	// httpClient is shared across every proxied stream/API request so
+	// upstream connections get pooled and reused instead of paying a
+	// fresh TCP/TLS handshake on every channel switch. Its Transport
+	// bounds connection setup and time-to-first-byte (DialContext,
+	// ResponseHeaderTimeout) without capping how long an established
+	// stream may run — a stream's *body* read has no deadline here, so
+	// long-running video doesn't get cut off by these timeouts.
+	httpClient *http.Client
 }
 
 // NewServer initializes a new server configuration backed by st.
@@ -79,6 +101,8 @@ func NewServer(conf *config.ProxyConfig, st *store.Store) (*Config, error) {
 		hlsChannelsRedirectURL: map[string]hlsRedirect{},
 		xtreamM3uCache:         map[string]cacheMeta{},
 		streams:                newStreamTracker(),
+		authLimiter:            ratelimit.New(authAttemptLimit, authAttemptWindow),
+		httpClient:             newUpstreamHTTPClient(),
 	}
 
 	router := gin.Default()
@@ -89,9 +113,68 @@ func NewServer(conf *config.ProxyConfig, st *store.Store) (*Config, error) {
 	return c, nil
 }
 
-// Serve the iptv-proxy api
+func newUpstreamHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ResponseHeaderTimeout: 15 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+		},
+	}
+}
+
+// Serve the iptv-proxy api. Server-side timeouts here are deliberately
+// limited to header reads and idle keep-alive connections — not
+// ReadTimeout/WriteTimeout, which would bound the *entire* connection
+// lifetime including response body writes and would cut off long
+// streams.
+//
+// SIGTERM/SIGINT (e.g. a container stop or Ctrl-C) trigger a graceful
+// shutdown: stop accepting new connections, but give in-flight
+// requests — including active streams — up to shutdownGracePeriod to
+// finish on their own before forcibly closing them.
 func (c *Config) Serve() error {
-	return c.Router.Run(fmt.Sprintf(":%d", c.HostConfig.Port))
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", c.HostConfig.Port),
+		Handler:           c.Router,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	select {
+	case err := <-errCh:
+		return err
+	case sig := <-sigCh:
+		slog.Info("shutting down", "signal", sig.String(), "grace_period", shutdownGracePeriod)
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
+		defer cancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+
+		return <-errCh
+	}
 }
 
 // marshallInto writes playlist as an M3U file into into, rewriting

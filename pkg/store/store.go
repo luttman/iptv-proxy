@@ -23,6 +23,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -74,11 +75,21 @@ CREATE TABLE IF NOT EXISTS users (
 	username TEXT NOT NULL UNIQUE,
 	password_hash TEXT NOT NULL,
 	xtream_code_id INTEGER NOT NULL REFERENCES xtream_codes(id),
+	max_concurrent_streams INTEGER NOT NULL DEFAULT 1,
 	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
+	}
+
+	// Defensive migration for databases created before
+	// max_concurrent_streams existed; CREATE TABLE IF NOT EXISTS above
+	// doesn't add columns to an already-existing table.
+	if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN max_concurrent_streams INTEGER NOT NULL DEFAULT 1`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("migrate schema (add max_concurrent_streams): %w", err)
+		}
 	}
 
 	return nil

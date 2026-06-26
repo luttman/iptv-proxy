@@ -70,7 +70,7 @@ func TestLiveStream_RoutesToAssignedBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID); err != nil {
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -108,7 +108,7 @@ func TestLiveStream_WrongPasswordRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID); err != nil {
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -143,10 +143,10 @@ func TestLiveStream_TwoUsersDifferentBackends(t *testing.T) {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
 
-	if _, err := c.Store.CreateUser("alice", "alicepass", xcA.ID); err != nil {
+	if _, err := c.Store.CreateUser("alice", "alicepass", xcA.ID, 0); err != nil {
 		t.Fatalf("CreateUser(alice) error: %v", err)
 	}
-	if _, err := c.Store.CreateUser("bob", "bobpass", xcB.ID); err != nil {
+	if _, err := c.Store.CreateUser("bob", "bobpass", xcB.ID, 0); err != nil {
 		t.Fatalf("CreateUser(bob) error: %v", err)
 	}
 
@@ -186,7 +186,7 @@ func TestLiveStream_TrackedWhileActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID); err != nil {
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -254,7 +254,7 @@ func TestLiveStream_StopForciblyEndsStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID); err != nil {
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -316,7 +316,7 @@ func TestXMLTV_NoLoginAndNoExtraActionParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID); err != nil {
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -349,4 +349,140 @@ func TestXMLTV_NoLoginAndNoExtraActionParam(t *testing.T) {
 	if gotURL.Query().Get("username") != "xuser" || gotURL.Query().Get("password") != "xpass" {
 		t.Errorf("upstream query = %q, want upstream xtream credentials", gotURL.RawQuery)
 	}
+}
+
+func TestAuth_RateLimitedAfterRepeatedFailures(t *testing.T) {
+	c := newTestServer(t)
+	proxy := httptest.NewServer(c.Router)
+	defer proxy.Close()
+
+	xc, err := c.Store.CreateXtreamCode("provider-a", "http://unused.example.com", "xuser", "xpass")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	var lastStatus int
+	for i := 0; i < authAttemptLimit+1; i++ {
+		resp, err := http.Get(proxy.URL + "/live/alice/wrong-password/1.ts")
+		if err != nil {
+			t.Fatalf("GET error: %v", err)
+		}
+		resp.Body.Close()
+		lastStatus = resp.StatusCode
+	}
+
+	if lastStatus != http.StatusTooManyRequests {
+		t.Errorf("status after %d failed attempts = %d, want %d", authAttemptLimit+1, lastStatus, http.StatusTooManyRequests)
+	}
+
+	// A correct login from the same IP is also blocked while the
+	// window is still active — this is intentional: rate limiting
+	// happens before credentials are even checked.
+	resp, err := http.Get(proxy.URL + "/live/alice/hunter2/1.ts")
+	if err != nil {
+		t.Fatalf("GET error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("status for correct login while blocked = %d, want %d", resp.StatusCode, http.StatusTooManyRequests)
+	}
+}
+
+func TestPerUserStreamLimit_EvictsOldestOnNewStream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher := w.(http.Flusher)
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+				w.Write([]byte("x")) // nolint: errcheck
+				flusher.Flush()
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	c := newTestServer(t)
+	proxy := httptest.NewServer(c.Router)
+	defer proxy.Close()
+
+	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	// Limit of 1: starting a second stream must evict the first.
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 1); err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	firstDone := make(chan struct{})
+	go func() {
+		resp, err := http.Get(proxy.URL + "/live/alice/hunter2/1.ts")
+		if err == nil {
+			io.Copy(io.Discard, resp.Body) // nolint: errcheck
+			resp.Body.Close()
+		}
+		close(firstDone)
+	}()
+
+	waitForStreamCount(t, c, 1)
+
+	secondDone := make(chan struct{})
+	go func() {
+		resp, err := http.Get(proxy.URL + "/live/alice/hunter2/2.ts")
+		if err == nil {
+			io.Copy(io.Discard, resp.Body) // nolint: errcheck
+			resp.Body.Close()
+		}
+		close(secondDone)
+	}()
+
+	select {
+	case <-firstDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first stream was not evicted after the second started")
+	}
+
+	streams := c.ActiveStreams()
+	if len(streams) != 1 {
+		t.Fatalf("ActiveStreams() len = %d, want 1 (limit is 1)", len(streams))
+	}
+	if streams[0].Path != "/live/alice/hunter2/2.ts" {
+		t.Errorf("surviving stream path = %q, want the second request's path", streams[0].Path)
+	}
+
+	select {
+	case <-secondDone:
+		t.Fatal("second stream ended unexpectedly; it should still be running")
+	default:
+	}
+
+	// Clean up the still-running second stream so the deferred
+	// upstream.Close()/proxy.Close() (which block until all
+	// outstanding connections finish) don't hang the test.
+	c.StopStream(streams[0].ID)
+	select {
+	case <-secondDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second stream did not stop after StopStream()")
+	}
+}
+
+func waitForStreamCount(t *testing.T, c *Config, want int) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(c.ActiveStreams()) == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("ActiveStreams() never reached length %d", want)
 }

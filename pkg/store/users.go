@@ -30,16 +30,18 @@ import (
 // username doesn't exist or the password doesn't match.
 var ErrInvalidCredentials = errors.New("invalid username or password")
 
-// CreateUser inserts a new proxy user assigned to the given xtream code.
-func (s *Store) CreateUser(username, password string, xtreamCodeID int64) (User, error) {
+// CreateUser inserts a new proxy user assigned to the given xtream
+// code. maxConcurrentStreams caps how many streams this user may have
+// open at once; 0 means unlimited.
+func (s *Store) CreateUser(username, password string, xtreamCodeID int64, maxConcurrentStreams int) (User, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return User{}, fmt.Errorf("hash password: %w", err)
 	}
 
 	res, err := s.db.Exec(
-		`INSERT INTO users (username, password_hash, xtream_code_id) VALUES (?, ?, ?)`,
-		username, string(hash), xtreamCodeID,
+		`INSERT INTO users (username, password_hash, xtream_code_id, max_concurrent_streams) VALUES (?, ?, ?, ?)`,
+		username, string(hash), xtreamCodeID, maxConcurrentStreams,
 	)
 	if err != nil {
 		return User{}, fmt.Errorf("create user: %w", err)
@@ -53,13 +55,13 @@ func (s *Store) CreateUser(username, password string, xtreamCodeID int64) (User,
 	return s.GetUser(id)
 }
 
-// UpdateUser updates a user's xtream-code assignment and, if password
-// is non-empty, its password too.
-func (s *Store) UpdateUser(id int64, username, password string, xtreamCodeID int64) (User, error) {
+// UpdateUser updates a user's xtream-code assignment and stream
+// limit, and, if password is non-empty, its password too.
+func (s *Store) UpdateUser(id int64, username, password string, xtreamCodeID int64, maxConcurrentStreams int) (User, error) {
 	if password == "" {
 		_, err := s.db.Exec(
-			`UPDATE users SET username = ?, xtream_code_id = ? WHERE id = ?`,
-			username, xtreamCodeID, id,
+			`UPDATE users SET username = ?, xtream_code_id = ?, max_concurrent_streams = ? WHERE id = ?`,
+			username, xtreamCodeID, maxConcurrentStreams, id,
 		)
 		if err != nil {
 			return User{}, fmt.Errorf("update user: %w", err)
@@ -74,8 +76,8 @@ func (s *Store) UpdateUser(id int64, username, password string, xtreamCodeID int
 	}
 
 	_, err = s.db.Exec(
-		`UPDATE users SET username = ?, password_hash = ?, xtream_code_id = ? WHERE id = ?`,
-		username, string(hash), xtreamCodeID, id,
+		`UPDATE users SET username = ?, password_hash = ?, xtream_code_id = ?, max_concurrent_streams = ? WHERE id = ?`,
+		username, string(hash), xtreamCodeID, maxConcurrentStreams, id,
 	)
 	if err != nil {
 		return User{}, fmt.Errorf("update user: %w", err)
@@ -96,7 +98,7 @@ func (s *Store) DeleteUser(id int64) error {
 // GetUser looks up a user by id.
 func (s *Store) GetUser(id int64) (User, error) {
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, xtream_code_id, created_at FROM users WHERE id = ?`,
+		`SELECT id, username, password_hash, xtream_code_id, max_concurrent_streams, created_at FROM users WHERE id = ?`,
 		id,
 	)
 
@@ -105,7 +107,7 @@ func (s *Store) GetUser(id int64) (User, error) {
 
 // ListUsers returns all users ordered by username.
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id, username, password_hash, xtream_code_id, created_at FROM users ORDER BY username`)
+	rows, err := s.db.Query(`SELECT id, username, password_hash, xtream_code_id, max_concurrent_streams, created_at FROM users ORDER BY username`)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -128,7 +130,7 @@ func (s *Store) ListUsers() ([]User, error) {
 // to.
 func (s *Store) Authenticate(username, password string) (User, XtreamCode, error) {
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, xtream_code_id, created_at FROM users WHERE username = ?`,
+		`SELECT id, username, password_hash, xtream_code_id, max_concurrent_streams, created_at FROM users WHERE username = ?`,
 		username,
 	)
 
@@ -154,7 +156,7 @@ func (s *Store) Authenticate(username, password string) (User, XtreamCode, error
 
 func scanUser(row rowScanner) (User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.XtreamCodeID, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.XtreamCodeID, &u.MaxConcurrentStreams, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

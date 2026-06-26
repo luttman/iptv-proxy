@@ -32,10 +32,13 @@ type XtreamCode struct {
 }
 
 // User is a proxy-facing login, assigned to exactly one XtreamCode.
+// MaxConcurrentStreams caps how many streams this user may have open
+// at once; 0 means unlimited.
 type User struct {
-	ID           int64
-	Username     string
-	PasswordHash string
-	XtreamCodeID int64
-	CreatedAt    time.Time
+	ID                   int64
+	Username             string
+	PasswordHash         string
+	XtreamCodeID         int64
+	MaxConcurrentStreams int
+	CreatedAt            time.Time
 }

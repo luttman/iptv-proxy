@@ -20,14 +20,27 @@ package admin
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/ratelimit"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/server"
 )
 
+// loginAttemptLimit and loginAttemptWindow bound brute-forcing of the
+// single admin account: 5 wrong passwords from one IP within 5
+// minutes locks that IP out of /admin/login until the window rolls
+// over.
+const (
+	loginAttemptLimit  = 5
+	loginAttemptWindow = 5 * time.Minute
+)
+
 type admin struct {
-	srv    *server.Config
-	creds  Credentials
-	signer *sessionSigner
+	srv           *server.Config
+	creds         Credentials
+	signer        *sessionSigner
+	secureCookies bool
+	loginLimiter  *ratelimit.Limiter
 }
 
 // Register mounts the admin management UI at /admin on srv's Gin
@@ -38,27 +51,30 @@ func Register(srv *server.Config, creds Credentials) error {
 		return fmt.Errorf("register admin UI: %w", err)
 	}
 
-	a := &admin{srv: srv, creds: creds, signer: signer}
+	a := &admin{
+		srv: srv, creds: creds, signer: signer, secureCookies: srv.HTTPS,
+		loginLimiter: ratelimit.New(loginAttemptLimit, loginAttemptWindow),
+	}
 
 	r := srv.Router.Group("/admin")
 	r.GET("/login", a.loginPage)
 	r.POST("/login", a.login)
 
 	authed := r.Group("", a.requireSession)
-	authed.POST("/logout", a.logout)
+	authed.POST("/logout", a.csrfProtect, a.logout)
 	authed.GET("", a.dashboard)
 	authed.GET("/streams.json", a.streamsJSON)
-	authed.POST("/streams/:id/stop", a.streamStop)
+	authed.POST("/streams/:id/stop", a.csrfProtect, a.streamStop)
 	authed.GET("/xtream-codes/new", a.xtreamCodeNewForm)
-	authed.POST("/xtream-codes/new", a.xtreamCodeCreate)
+	authed.POST("/xtream-codes/new", a.csrfProtect, a.xtreamCodeCreate)
 	authed.GET("/xtream-codes/:id/edit", a.xtreamCodeEditForm)
-	authed.POST("/xtream-codes/:id/edit", a.xtreamCodeUpdate)
-	authed.POST("/xtream-codes/:id/delete", a.xtreamCodeDelete)
+	authed.POST("/xtream-codes/:id/edit", a.csrfProtect, a.xtreamCodeUpdate)
+	authed.POST("/xtream-codes/:id/delete", a.csrfProtect, a.xtreamCodeDelete)
 	authed.GET("/users/new", a.userNewForm)
-	authed.POST("/users/new", a.userCreate)
+	authed.POST("/users/new", a.csrfProtect, a.userCreate)
 	authed.GET("/users/:id/edit", a.userEditForm)
-	authed.POST("/users/:id/edit", a.userUpdate)
-	authed.POST("/users/:id/delete", a.userDelete)
+	authed.POST("/users/:id/edit", a.csrfProtect, a.userUpdate)
+	authed.POST("/users/:id/delete", a.csrfProtect, a.userDelete)
 
 	return nil
 }

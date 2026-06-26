@@ -33,16 +33,26 @@ func (a *admin) loginPage(ctx *gin.Context) {
 }
 
 func (a *admin) login(ctx *gin.Context) {
+	ip := ctx.ClientIP()
+	if a.loginLimiter.Blocked(ip) {
+		ctx.Header("Content-Type", "text/html; charset=utf-8")
+		ctx.Status(http.StatusTooManyRequests)
+		templates.ExecuteTemplate(ctx.Writer, "login", gin.H{"Error": "Too many failed attempts. Try again later."}) // nolint: errcheck
+		return
+	}
+
 	username := ctx.PostForm("username")
 	password := ctx.PostForm("password")
 
 	if !checkCredentials(a.creds, username, password) {
+		a.loginLimiter.RecordFailure(ip)
 		ctx.Header("Content-Type", "text/html; charset=utf-8")
 		ctx.Status(http.StatusUnauthorized)
 		templates.ExecuteTemplate(ctx.Writer, "login", gin.H{"Error": "Invalid username or password"}) // nolint: errcheck
 		return
 	}
 
+	a.loginLimiter.RecordSuccess(ip)
 	a.issueSession(ctx)
 	ctx.Redirect(http.StatusFound, "/admin")
 }
@@ -132,13 +142,15 @@ func (a *admin) dashboard(ctx *gin.Context) {
 		"XtreamCodes":   codes,
 		"Users":         rows,
 		"ActiveStreams": a.streamRows(),
+		"CSRFToken":     a.csrfToken(ctx),
 	})
 }
 
 func (a *admin) xtreamCodeNewForm(ctx *gin.Context) {
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	templates.ExecuteTemplate(ctx.Writer, "xtreamCodeForm", gin.H{ // nolint: errcheck
-		"Action": "/admin/xtream-codes/new",
+		"Action":    "/admin/xtream-codes/new",
+		"CSRFToken": a.csrfToken(ctx),
 	})
 }
 
@@ -153,8 +165,8 @@ func (a *admin) xtreamCodeCreate(ctx *gin.Context) {
 		ctx.Header("Content-Type", "text/html; charset=utf-8")
 		templates.ExecuteTemplate(ctx.Writer, "xtreamCodeForm", gin.H{ // nolint: errcheck
 			"Action": "/admin/xtream-codes/new",
-			"Error":  err.Error(),
-			"Name":   ctx.PostForm("name"), "BaseURL": ctx.PostForm("base_url"),
+			"Error":  err.Error(), "CSRFToken": a.csrfToken(ctx),
+			"Name": ctx.PostForm("name"), "BaseURL": ctx.PostForm("base_url"),
 			"XtreamUser": ctx.PostForm("xtream_user"), "XtreamPassword": ctx.PostForm("xtream_password"),
 		})
 		return
@@ -178,8 +190,8 @@ func (a *admin) xtreamCodeEditForm(ctx *gin.Context) {
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	templates.ExecuteTemplate(ctx.Writer, "xtreamCodeForm", gin.H{ // nolint: errcheck
-		"Action": "/admin/xtream-codes/" + ctx.Param("id") + "/edit",
-		"ID":     xc.ID, "Name": xc.Name, "BaseURL": xc.BaseURL,
+		"Action": "/admin/xtream-codes/" + ctx.Param("id") + "/edit", "CSRFToken": a.csrfToken(ctx),
+		"ID": xc.ID, "Name": xc.Name, "BaseURL": xc.BaseURL,
 		"XtreamUser": xc.XtreamUser, "XtreamPassword": xc.XtreamPassword,
 	})
 }
@@ -201,8 +213,8 @@ func (a *admin) xtreamCodeUpdate(ctx *gin.Context) {
 	if err != nil {
 		ctx.Header("Content-Type", "text/html; charset=utf-8")
 		templates.ExecuteTemplate(ctx.Writer, "xtreamCodeForm", gin.H{ // nolint: errcheck
-			"Action": "/admin/xtream-codes/" + ctx.Param("id") + "/edit",
-			"ID":     id, "Error": err.Error(),
+			"Action": "/admin/xtream-codes/" + ctx.Param("id") + "/edit", "CSRFToken": a.csrfToken(ctx),
+			"ID": id, "Error": err.Error(),
 			"Name": ctx.PostForm("name"), "BaseURL": ctx.PostForm("base_url"),
 			"XtreamUser": ctx.PostForm("xtream_user"), "XtreamPassword": ctx.PostForm("xtream_password"),
 		})
@@ -231,6 +243,18 @@ func (a *admin) xtreamCodeDelete(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, "/admin")
 }
 
+// maxStreamsFromForm parses the max_concurrent_streams field,
+// defaulting to 1 (matching the database column default) if it's
+// missing or invalid rather than silently allowing unlimited streams.
+func maxStreamsFromForm(ctx *gin.Context) int {
+	n, err := strconv.Atoi(ctx.PostForm("max_concurrent_streams"))
+	if err != nil || n < 0 {
+		return 1
+	}
+
+	return n
+}
+
 func (a *admin) userNewForm(ctx *gin.Context) {
 	codes, err := a.srv.Store.ListXtreamCodes()
 	if err != nil {
@@ -240,8 +264,10 @@ func (a *admin) userNewForm(ctx *gin.Context) {
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	templates.ExecuteTemplate(ctx.Writer, "userForm", gin.H{ // nolint: errcheck
-		"Action":      "/admin/users/new",
-		"XtreamCodes": codes,
+		"Action":               "/admin/users/new",
+		"XtreamCodes":          codes,
+		"CSRFToken":            a.csrfToken(ctx),
+		"MaxConcurrentStreams": 1,
 	})
 }
 
@@ -252,15 +278,17 @@ func (a *admin) userCreate(ctx *gin.Context) {
 		return
 	}
 
+	maxStreams := maxStreamsFromForm(ctx)
 	xtreamCodeID, err := strconv.ParseInt(ctx.PostForm("xtream_code_id"), 10, 64)
 	if err == nil {
-		_, err = a.srv.Store.CreateUser(ctx.PostForm("username"), ctx.PostForm("password"), xtreamCodeID)
+		_, err = a.srv.Store.CreateUser(ctx.PostForm("username"), ctx.PostForm("password"), xtreamCodeID, maxStreams)
 	}
 	if err != nil {
 		ctx.Header("Content-Type", "text/html; charset=utf-8")
 		templates.ExecuteTemplate(ctx.Writer, "userForm", gin.H{ // nolint: errcheck
-			"Action": "/admin/users/new", "Error": err.Error(),
+			"Action": "/admin/users/new", "Error": err.Error(), "CSRFToken": a.csrfToken(ctx),
 			"Username": ctx.PostForm("username"), "XtreamCodes": codes, "XtreamCodeID": xtreamCodeID,
+			"MaxConcurrentStreams": maxStreams,
 		})
 		return
 	}
@@ -289,9 +317,10 @@ func (a *admin) userEditForm(ctx *gin.Context) {
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	templates.ExecuteTemplate(ctx.Writer, "userForm", gin.H{ // nolint: errcheck
-		"Action": "/admin/users/" + ctx.Param("id") + "/edit",
-		"ID":     u.ID, "Username": u.Username, "XtreamCodeID": u.XtreamCodeID,
-		"XtreamCodes": codes,
+		"Action": "/admin/users/" + ctx.Param("id") + "/edit", "CSRFToken": a.csrfToken(ctx),
+		"ID": u.ID, "Username": u.Username, "XtreamCodeID": u.XtreamCodeID,
+		"XtreamCodes":          codes,
+		"MaxConcurrentStreams": u.MaxConcurrentStreams,
 	})
 }
 
@@ -308,15 +337,17 @@ func (a *admin) userUpdate(ctx *gin.Context) {
 		return
 	}
 
+	maxStreams := maxStreamsFromForm(ctx)
 	xtreamCodeID, err := strconv.ParseInt(ctx.PostForm("xtream_code_id"), 10, 64)
 	if err == nil {
-		_, err = a.srv.Store.UpdateUser(id, ctx.PostForm("username"), ctx.PostForm("password"), xtreamCodeID)
+		_, err = a.srv.Store.UpdateUser(id, ctx.PostForm("username"), ctx.PostForm("password"), xtreamCodeID, maxStreams)
 	}
 	if err != nil {
 		ctx.Header("Content-Type", "text/html; charset=utf-8")
 		templates.ExecuteTemplate(ctx.Writer, "userForm", gin.H{ // nolint: errcheck
-			"Action": "/admin/users/" + ctx.Param("id") + "/edit", "Error": err.Error(),
+			"Action": "/admin/users/" + ctx.Param("id") + "/edit", "Error": err.Error(), "CSRFToken": a.csrfToken(ctx),
 			"ID": id, "Username": ctx.PostForm("username"), "XtreamCodes": codes, "XtreamCodeID": xtreamCodeID,
+			"MaxConcurrentStreams": maxStreams,
 		})
 		return
 	}

@@ -114,10 +114,12 @@ func (c *Config) getHlsRedirectURL(channel string) (hlsRedirect, error) {
 }
 
 func (c *Config) hlsXtreamStream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	// Share the pooled transport but override the redirect policy:
+	// hlsXtreamStream needs to see the 302 itself rather than have it
+	// followed automatically.
+	client := *c.httpClient
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
 
 	req, err := http.NewRequestWithContext(ctx.Request.Context(), "GET", oriURL.String(), nil)
