@@ -20,9 +20,35 @@ package admin
 
 import "html/template"
 
-const styleBlock = `
+// themeInit runs before any styling is parsed so the saved theme
+// (or the dark default) applies with no flash of the wrong theme.
+const themeInit = `<script>(function(){var t=localStorage.getItem('iptvproxy-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>`
+
+const themeToggle = `
+<button class="theme-toggle" type="button" title="Toggle light/dark theme" onclick="(function(){var h=document.documentElement;var next=h.getAttribute('data-theme')==='light'?'dark':'light';localStorage.setItem('iptvproxy-theme',next);h.setAttribute('data-theme',next);})()">
+  <span class="icon-sun">&#9728;&#65039;</span><span class="icon-moon">&#127769;</span>
+</button>
+`
+
+const styleBlock = themeInit + `
 <style>
   :root {
+    /* Dark theme (default) */
+    --bg: #11141a;
+    --panel: #1a1e26;
+    --border: #2b313d;
+    --text: #e7e9ee;
+    --muted: #8d94a3;
+    --accent: #7b8cf0;
+    --accent-dark: #97a4f3;
+    --danger: #ef6478;
+    --danger-dark: #f4899a;
+    --badge-bg: #232a44;
+    --danger-bg: #3a2026;
+    --danger-border: #5a2c34;
+    --radius: 10px;
+  }
+  html[data-theme="light"] {
     --bg: #f4f6f9;
     --panel: #ffffff;
     --border: #e3e7ee;
@@ -32,9 +58,21 @@ const styleBlock = `
     --accent-dark: #3b4cb0;
     --danger: #d3455b;
     --danger-dark: #b8334a;
-    --radius: 10px;
+    --badge-bg: #eef0fb;
+    --danger-bg: #fdeef0;
+    --danger-border: #f6c9d1;
   }
   * { box-sizing: border-box; }
+  html, body { transition: background-color 0.15s ease; }
+  .theme-toggle {
+    position: fixed; top: 1rem; right: 1.5rem; z-index: 10;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+    width: 2.2rem; height: 2.2rem; cursor: pointer; font-size: 1rem; line-height: 1;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .icon-moon { display: none; }
+  html[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+  html[data-theme="light"] .theme-toggle .icon-moon { display: inline; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg);
@@ -75,13 +113,13 @@ const styleBlock = `
   .empty-row td { color: var(--muted); text-align: center; padding: 1.5rem 0; }
   .badge {
     display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px;
-    background: #eef0fb; color: var(--accent-dark); font-size: 0.75rem; font-weight: 600;
+    background: var(--badge-bg); color: var(--accent-dark); font-size: 0.75rem; font-weight: 600;
   }
   .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.82rem; color: var(--muted); }
   form.inline { display: inline; }
   .actions a, .actions button { margin-right: 0.4rem; }
   .error {
-    color: var(--danger); background: #fdeef0; border: 1px solid #f6c9d1;
+    color: var(--danger); background: var(--danger-bg); border: 1px solid var(--danger-border);
     border-radius: var(--radius); padding: 0.6rem 0.9rem; margin-bottom: 1rem; font-size: 0.88rem;
   }
   label { display: block; margin-top: 0.9rem; font-weight: 600; font-size: 0.85rem; }
@@ -103,12 +141,12 @@ const styleBlock = `
     display: inline-block; padding: 0.3rem 0.7rem; font-size: 0.8rem; font-weight: 600;
     color: var(--accent); text-decoration: none; border: 1px solid var(--border); border-radius: 6px;
   }
-  .btn-link:hover { background: #eef0fb; }
+  .btn-link:hover { background: var(--badge-bg); }
   .add-link { font-size: 0.88rem; font-weight: 600; color: var(--accent); text-decoration: none; }
 </style>
 `
 
-const loginPage = styleBlock + `
+const loginPage = styleBlock + themeToggle + `
 <div class="login-shell">
   <h1>iptv-proxy admin</h1>
   {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
@@ -122,7 +160,7 @@ const loginPage = styleBlock + `
 </div>
 `
 
-const dashboardPage = styleBlock + `
+const dashboardPage = styleBlock + themeToggle + `
 <div class="wrap">
   <header class="topbar">
     <h1>iptv-proxy admin</h1>
@@ -271,7 +309,7 @@ setInterval(refreshStreams, 5000);
 </script>
 `
 
-const xtreamCodeFormPage = styleBlock + `
+const xtreamCodeFormPage = styleBlock + themeToggle + `
 <div class="wrap">
   <header class="topbar"><h1>iptv-proxy admin</h1><nav><a href="/admin">&larr; Dashboard</a></nav></header>
   <div class="panel" style="max-width:480px;">
@@ -292,7 +330,7 @@ const xtreamCodeFormPage = styleBlock + `
 </div>
 `
 
-const userFormPage = styleBlock + `
+const userFormPage = styleBlock + themeToggle + `
 <div class="wrap">
   <header class="topbar"><h1>iptv-proxy admin</h1><nav><a href="/admin">&larr; Dashboard</a></nav></header>
   <div class="panel" style="max-width:480px;">
