@@ -61,6 +61,7 @@ type dashboardUserRow struct {
 // the dashboard's JS can use directly (both for the initial
 // server-rendered page and the polled JSON endpoint).
 type streamRow struct {
+	ID            int64
 	ProxyUser     string
 	Backend       string
 	Path          string
@@ -72,6 +73,7 @@ func (a *admin) streamRows() []streamRow {
 	rows := make([]streamRow, 0, len(active))
 	for _, s := range active {
 		rows = append(rows, streamRow{
+			ID:            s.ID,
 			ProxyUser:     s.ProxyUser,
 			Backend:       s.Backend,
 			Path:          s.Path,
@@ -85,6 +87,21 @@ func (a *admin) streamRows() []streamRow {
 func (a *admin) streamsJSON(ctx *gin.Context) {
 	rows := a.streamRows()
 	ctx.JSON(http.StatusOK, gin.H{"count": len(rows), "streams": rows})
+}
+
+func (a *admin) streamStop(ctx *gin.Context) {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	if !a.srv.StopStream(id) {
+		ctx.String(http.StatusNotFound, "stream not found (it may have already ended)")
+		return
+	}
+
+	ctx.Status(http.StatusNoContent)
 }
 
 func (a *admin) dashboard(ctx *gin.Context) {

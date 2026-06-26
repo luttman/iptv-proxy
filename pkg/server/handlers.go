@@ -20,6 +20,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,7 +34,14 @@ import (
 func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 	client := &http.Client{}
 
-	req, err := http.NewRequestWithContext(ctx.Request.Context(), "GET", oriURL.String(), nil)
+	// A cancelable child of the request context, so a stream can be
+	// forcibly torn down from the admin UI (some IPTV players don't
+	// cleanly close the old connection when switching channels,
+	// leaving an orphaned stream that would otherwise never end).
+	reqCtx, cancel := context.WithCancel(ctx.Request.Context())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, "GET", oriURL.String(), nil)
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
@@ -48,7 +56,7 @@ func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 	}
 	defer resp.Body.Close()
 
-	streamID := c.streams.start(ru, ctx.Request.URL.Path)
+	streamID := c.streams.start(ru, ctx.Request.URL.Path, cancel)
 	defer c.streams.end(streamID)
 
 	mergeHttpHeader(ctx.Writer.Header(), resp.Header)

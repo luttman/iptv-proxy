@@ -189,7 +189,7 @@ const dashboardPage = styleBlock + themeToggle + `
   <div class="panel">
     <div class="panel-header"><h2>Active streams</h2></div>
     <table id="streamsTable">
-      <tr><th>User</th><th>Backend</th><th>Path</th><th>Duration</th></tr>
+      <tr><th>User</th><th>Backend</th><th>Path</th><th>Duration</th><th></th></tr>
       <tbody id="streamsBody">
       {{range .ActiveStreams}}
       <tr>
@@ -197,9 +197,10 @@ const dashboardPage = styleBlock + themeToggle + `
         <td>{{.Backend}}</td>
         <td class="mono">{{.Path}}</td>
         <td data-started="{{.StartedAtUnix}}" class="duration">0s</td>
+        <td><button type="button" class="btn btn-sm btn-danger" onclick="stopStream({{.ID}})">Stop</button></td>
       </tr>
       {{else}}
-      <tr class="empty-row"><td colspan="4">No active streams</td></tr>
+      <tr class="empty-row"><td colspan="5">No active streams</td></tr>
       {{end}}
       </tbody>
     </table>
@@ -283,17 +284,24 @@ function refreshStreams() {
       document.getElementById('streamCount').textContent = data.count;
       var body = document.getElementById('streamsBody');
       if (data.count === 0) {
-        body.innerHTML = '<tr class="empty-row"><td colspan="4">No active streams</td></tr>';
+        body.innerHTML = '<tr class="empty-row"><td colspan="5">No active streams</td></tr>';
         return;
       }
       var rows = data.streams.map(function (s) {
         return '<tr><td>' + escapeHtml(s.ProxyUser) + '</td><td>' + escapeHtml(s.Backend) +
           '</td><td class="mono">' + escapeHtml(s.Path) + '</td>' +
-          '<td data-started="' + s.StartedAtUnix + '" class="duration">0s</td></tr>';
+          '<td data-started="' + s.StartedAtUnix + '" class="duration">0s</td>' +
+          '<td><button type="button" class="btn btn-sm btn-danger" onclick="stopStream(' + s.ID + ')">Stop</button></td></tr>';
       });
       body.innerHTML = rows.join('');
       tickDurations();
     })
+    .catch(function () {});
+}
+
+function stopStream(id) {
+  fetch('/admin/streams/' + id + '/stop', { method: 'POST', credentials: 'same-origin' })
+    .then(function () { refreshStreams(); })
     .catch(function () {});
 }
 

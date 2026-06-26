@@ -230,6 +230,78 @@ func TestLiveStream_TrackedWhileActive(t *testing.T) {
 	t.Fatal("stream was never observed as active")
 }
 
+func TestLiveStream_StopForciblyEndsStream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher := w.(http.Flusher)
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+				w.Write([]byte("x")) // nolint: errcheck
+				flusher.Flush()
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	c := newTestServer(t)
+	proxy := httptest.NewServer(c.Router)
+	defer proxy.Close()
+
+	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID); err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		resp, err := http.Get(proxy.URL + "/live/alice/hunter2/42.ts")
+		if err == nil {
+			io.Copy(io.Discard, resp.Body) // nolint: errcheck
+			resp.Body.Close()
+		}
+		close(done)
+	}()
+
+	var id int64
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if streams := c.ActiveStreams(); len(streams) == 1 {
+			id = streams[0].ID
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if id == 0 {
+		t.Fatal("stream never became active; nothing to stop")
+	}
+
+	// Without StopStream, this upstream handler never closes on its
+	// own, simulating a player that never cleanly disconnects.
+	if !c.StopStream(id) {
+		t.Fatal("StopStream() returned false for an active stream")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not complete after StopStream()")
+	}
+
+	if got := len(c.ActiveStreams()); got != 0 {
+		t.Errorf("ActiveStreams() after StopStream() = %d, want 0", got)
+	}
+
+	if c.StopStream(id) {
+		t.Error("StopStream() returned true for an already-ended stream")
+	}
+}
+
 func TestXMLTV_NoLoginAndNoExtraActionParam(t *testing.T) {
 	var gotURL *url.URL
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
