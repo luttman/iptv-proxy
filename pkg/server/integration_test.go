@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -227,4 +228,53 @@ func TestLiveStream_TrackedWhileActive(t *testing.T) {
 
 	close(release)
 	t.Fatal("stream was never observed as active")
+}
+
+func TestXMLTV_NoLoginAndNoExtraActionParam(t *testing.T) {
+	var gotURL *url.URL
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURL = r.URL
+		w.Write([]byte("<tv></tv>")) // nolint: errcheck
+	}))
+	defer upstream.Close()
+
+	c := newTestServer(t)
+
+	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID); err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	proxy := httptest.NewServer(c.Router)
+	defer proxy.Close()
+
+	resp, err := http.Get(proxy.URL + "/xmltv.php?username=alice&password=hunter2")
+	if err != nil {
+		t.Fatalf("GET error: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", resp.StatusCode, body)
+	}
+	if string(body) != "<tv></tv>" {
+		t.Errorf("body = %q, want %q", body, "<tv></tv>")
+	}
+
+	if gotURL == nil {
+		t.Fatal("upstream was never contacted")
+	}
+	if gotURL.Path != "/xmltv.php" {
+		t.Errorf("upstream path = %q, want %q (no separate login call expected)", gotURL.Path, "/xmltv.php")
+	}
+	if gotURL.Query().Get("action") != "" {
+		t.Errorf("upstream query has action=%q, want no action param at all", gotURL.Query().Get("action"))
+	}
+	if gotURL.Query().Get("username") != "xuser" || gotURL.Query().Get("password") != "xpass" {
+		t.Errorf("upstream query = %q, want upstream xtream credentials", gotURL.RawQuery)
+	}
 }
