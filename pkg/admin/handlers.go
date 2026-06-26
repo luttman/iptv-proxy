@@ -57,6 +57,36 @@ type dashboardUserRow struct {
 	XtreamCodeName string
 }
 
+// streamRow mirrors server.ActiveStream with a Unix-timestamp field
+// the dashboard's JS can use directly (both for the initial
+// server-rendered page and the polled JSON endpoint).
+type streamRow struct {
+	ProxyUser     string
+	Backend       string
+	Path          string
+	StartedAtUnix int64
+}
+
+func (a *admin) streamRows() []streamRow {
+	active := a.srv.ActiveStreams()
+	rows := make([]streamRow, 0, len(active))
+	for _, s := range active {
+		rows = append(rows, streamRow{
+			ProxyUser:     s.ProxyUser,
+			Backend:       s.Backend,
+			Path:          s.Path,
+			StartedAtUnix: s.StartedAt.Unix(),
+		})
+	}
+
+	return rows
+}
+
+func (a *admin) streamsJSON(ctx *gin.Context) {
+	rows := a.streamRows()
+	ctx.JSON(http.StatusOK, gin.H{"count": len(rows), "streams": rows})
+}
+
 func (a *admin) dashboard(ctx *gin.Context) {
 	codes, err := a.srv.Store.ListXtreamCodes()
 	if err != nil {
@@ -82,8 +112,9 @@ func (a *admin) dashboard(ctx *gin.Context) {
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	templates.ExecuteTemplate(ctx.Writer, "dashboard", gin.H{ // nolint: errcheck
-		"XtreamCodes": codes,
-		"Users":       rows,
+		"XtreamCodes":   codes,
+		"Users":         rows,
+		"ActiveStreams": a.streamRows(),
 	})
 }
 

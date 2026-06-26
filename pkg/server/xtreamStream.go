@@ -90,7 +90,7 @@ func (c *Config) xtreamStreamTimeshift(ctx *gin.Context) {
 		return
 	}
 
-	c.stream(ctx, rpURL)
+	c.stream(ctx, rpURL, ru)
 }
 
 func (c *Config) xtreamStreamMovie(ctx *gin.Context) {

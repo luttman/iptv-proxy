@@ -30,7 +30,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (c *Config) stream(ctx *gin.Context, oriURL *url.URL) {
+func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 	client := &http.Client{}
 
 	req, err := http.NewRequestWithContext(ctx.Request.Context(), "GET", oriURL.String(), nil)
@@ -48,6 +48,9 @@ func (c *Config) stream(ctx *gin.Context, oriURL *url.URL) {
 	}
 	defer resp.Body.Close()
 
+	streamID := c.streams.start(ru, ctx.Request.URL.Path)
+	defer c.streams.end(streamID)
+
 	mergeHttpHeader(ctx.Writer.Header(), resp.Header)
 	ctx.Status(resp.StatusCode)
 	ctx.Stream(func(w io.Writer) bool {
@@ -63,7 +66,7 @@ func (c *Config) xtreamStream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser
 		return
 	}
 
-	c.stream(ctx, oriURL)
+	c.stream(ctx, oriURL, ru)
 }
 
 type values []string

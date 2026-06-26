@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
@@ -165,4 +166,65 @@ func TestLiveStream_TwoUsersDifferentBackends(t *testing.T) {
 	if hitsB != 1 {
 		t.Errorf("provider B hits = %d, want 1", hitsB)
 	}
+}
+
+func TestLiveStream_TrackedWhileActive(t *testing.T) {
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("chunk")) // nolint: errcheck
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	defer upstream.Close()
+
+	c := newTestServer(t)
+	proxy := httptest.NewServer(c.Router)
+	defer proxy.Close()
+
+	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID); err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	if got := len(c.ActiveStreams()); got != 0 {
+		t.Fatalf("ActiveStreams() before request = %d, want 0", got)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		resp, err := http.Get(proxy.URL + "/live/alice/hunter2/42.ts")
+		if err == nil {
+			io.ReadAll(resp.Body) // nolint: errcheck
+			resp.Body.Close()
+		}
+		close(done)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if streams := c.ActiveStreams(); len(streams) == 1 {
+			if streams[0].ProxyUser != "alice" || streams[0].Backend != "provider-a" {
+				t.Errorf("active stream = %+v, want ProxyUser=alice Backend=provider-a", streams[0])
+			}
+			close(release)
+
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("request did not complete after releasing upstream")
+			}
+
+			if got := len(c.ActiveStreams()); got != 0 {
+				t.Errorf("ActiveStreams() after request finished = %d, want 0", got)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	close(release)
+	t.Fatal("stream was never observed as active")
 }

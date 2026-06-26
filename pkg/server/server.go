@@ -67,6 +67,8 @@ type Config struct {
 
 	xtreamM3uCache     map[string]cacheMeta
 	xtreamM3uCacheLock sync.RWMutex
+
+	streams *streamTracker
 }
 
 // NewServer initializes a new server configuration backed by st.
@@ -76,6 +78,7 @@ func NewServer(conf *config.ProxyConfig, st *store.Store) (*Config, error) {
 		Store:                  st,
 		hlsChannelsRedirectURL: map[string]hlsRedirect{},
 		xtreamM3uCache:         map[string]cacheMeta{},
+		streams:                newStreamTracker(),
 	}
 
 	router := gin.Default()
