@@ -17,6 +17,12 @@ jobs:
       uses: golangci/golangci-lint-action@v6
       with:
         version: v1.64.8
+        # golangci-lint refuses to run if the Go version it was *built*
+        # with is older than this module's go.mod directive. Prebuilt
+        # release binaries lag behind brand-new Go releases, so build
+        # from source with the toolchain setup-go just installed
+        # instead of downloading a binary that may be stale.
+        install-mode: goinstall
     - name: Run tests and attempt building
       run: |
         export PATH=$(go env GOPATH)/bin:$PATH
