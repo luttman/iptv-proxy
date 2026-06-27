@@ -8,21 +8,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version-file: go.mod
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v6
+      uses: golangci/golangci-lint-action@v9
       with:
-        version: v1.64.8
-        # golangci-lint refuses to run if the Go version it was *built*
-        # with is older than this module's go.mod directive. Prebuilt
-        # release binaries lag behind brand-new Go releases, so build
-        # from source with the toolchain setup-go just installed
-        # instead of downloading a binary that may be stale.
-        install-mode: goinstall
+        version: v2.12.2
     - name: Run tests and attempt building
       run: |
         export PATH=$(go env GOPATH)/bin:$PATH
@@ -31,6 +25,6 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Build the Docker image
       run: docker build . --file Dockerfile --tag iptv-proxy:ci-build

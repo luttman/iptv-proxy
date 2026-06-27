@@ -43,7 +43,7 @@ func (c *Config) cacheXtreamM3u(playlist *m3u.Playlist, cacheName string, ru res
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer f.Close() // nolint: errcheck
 
 	if err := c.marshallInto(f, playlist, ru); err != nil {
 		return err

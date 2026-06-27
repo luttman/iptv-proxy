@@ -38,7 +38,7 @@ func newTestAdminServer(t *testing.T) (*server.Config, *httptest.Server) {
 	if err != nil {
 		t.Fatalf("store.Open() error: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { st.Close() }) // nolint: errcheck
 
 	srv, err := server.NewServer(&config.ProxyConfig{
 		HostConfig: &config.HostConfiguration{Hostname: "proxy.example.com", Port: 8080},
@@ -70,7 +70,7 @@ func login(t *testing.T, client *http.Client, baseURL string) {
 	if err != nil {
 		t.Fatalf("login POST error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login: status = %d, want 200 (gin redirect followed by client)", resp.StatusCode)
@@ -105,7 +105,7 @@ func TestLogin_WrongCredentialsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
@@ -126,7 +126,7 @@ func TestLogin_SetsSameSiteCookies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	found := map[string]bool{}
 	for _, c := range resp.Cookies() {
@@ -152,7 +152,7 @@ func TestDashboard_RequiresSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusFound {
 		t.Errorf("status = %d, want %d (redirect to login)", resp.StatusCode, http.StatusFound)
@@ -182,7 +182,7 @@ func TestCSRF_RejectsRequestWithoutToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
@@ -211,7 +211,7 @@ func TestCSRF_AcceptsRequestWithValidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (redirect followed)", resp.StatusCode)
@@ -246,7 +246,7 @@ func TestCSRF_RejectsMismatchedToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)

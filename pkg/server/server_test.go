@@ -37,7 +37,7 @@ func newTestConfig(t *testing.T) *Config {
 	if err != nil {
 		t.Fatalf("store.Open() error: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { st.Close() }) // nolint: errcheck
 
 	return &Config{
 		ProxyConfig: &config.ProxyConfig{
@@ -135,7 +135,7 @@ func TestMarshallInto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer f.Close()
+	defer f.Close() // nolint: errcheck
 
 	if err := c.marshallInto(f, playlist, ru); err != nil {
 		t.Fatalf("marshallInto() error: %v", err)
@@ -174,7 +174,7 @@ func TestMarshallInto_DropsTracksWithInvalidURI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer f.Close()
+	defer f.Close() // nolint: errcheck
 
 	if err := c.marshallInto(f, playlist, ru); err != nil {
 		t.Fatalf("marshallInto() error: %v", err)

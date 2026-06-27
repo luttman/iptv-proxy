@@ -135,7 +135,7 @@ func (c *Config) hlsXtreamStream(ctx *gin.Context, oriURL *url.URL, ru resolvedU
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode == http.StatusFound {
 		location, err := resp.Location()
@@ -162,7 +162,7 @@ func (c *Config) hlsXtreamStream(ctx *gin.Context, oriURL *url.URL, ru resolvedU
 				ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 				return
 			}
-			defer hlsResp.Body.Close()
+			defer hlsResp.Body.Close() // nolint: errcheck
 
 			b, err := io.ReadAll(hlsResp.Body)
 			if err != nil {
@@ -177,7 +177,7 @@ func (c *Config) hlsXtreamStream(ctx *gin.Context, oriURL *url.URL, ru resolvedU
 			ctx.Data(http.StatusOK, hlsResp.Header.Get("Content-Type"), []byte(body))
 			return
 		}
-		ctx.AbortWithError(http.StatusInternalServerError, errors.New("Unable to HLS stream")) // nolint: errcheck
+		ctx.AbortWithError(http.StatusInternalServerError, errors.New("unable to HLS stream")) // nolint: errcheck
 		return
 	}
 

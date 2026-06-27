@@ -52,7 +52,7 @@ func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	streamID := c.streams.start(ru, ctx.Request.URL.Path, cancel)
 	defer c.streams.end(streamID)

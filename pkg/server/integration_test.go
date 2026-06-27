@@ -40,7 +40,7 @@ func newTestServer(t *testing.T) *Config {
 	if err != nil {
 		t.Fatalf("store.Open() error: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { st.Close() }) // nolint: errcheck
 
 	c, err := NewServer(&config.ProxyConfig{
 		HostConfig:         &config.HostConfiguration{Hostname: "proxy.example.com", Port: 8080},
@@ -78,7 +78,7 @@ func TestLiveStream_RoutesToAssignedBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
@@ -116,7 +116,7 @@ func TestLiveStream_WrongPasswordRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
@@ -155,7 +155,7 @@ func TestLiveStream_TwoUsersDifferentBackends(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET %q error: %v", path, err)
 		}
-		resp.Body.Close()
+		resp.Body.Close() // nolint: errcheck
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("request %q: status = %d, want 200", path, resp.StatusCode)
 		}
@@ -199,7 +199,7 @@ func TestLiveStream_TrackedWhileActive(t *testing.T) {
 		resp, err := http.Get(proxy.URL + "/live/alice/hunter2/42.ts")
 		if err == nil {
 			io.ReadAll(resp.Body) // nolint: errcheck
-			resp.Body.Close()
+			resp.Body.Close()     // nolint: errcheck
 		}
 		close(done)
 	}()
@@ -263,7 +263,7 @@ func TestLiveStream_StopForciblyEndsStream(t *testing.T) {
 		resp, err := http.Get(proxy.URL + "/live/alice/hunter2/42.ts")
 		if err == nil {
 			io.Copy(io.Discard, resp.Body) // nolint: errcheck
-			resp.Body.Close()
+			resp.Body.Close()              // nolint: errcheck
 		}
 		close(done)
 	}()
@@ -327,7 +327,7 @@ func TestXMLTV_NoLoginAndNoExtraActionParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
@@ -370,7 +370,7 @@ func TestAuth_RateLimitedAfterRepeatedFailures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET error: %v", err)
 		}
-		resp.Body.Close()
+		resp.Body.Close() // nolint: errcheck
 		lastStatus = resp.StatusCode
 	}
 
@@ -385,7 +385,7 @@ func TestAuth_RateLimitedAfterRepeatedFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("status for correct login while blocked = %d, want %d", resp.StatusCode, http.StatusTooManyRequests)
 	}
@@ -425,7 +425,7 @@ func TestPerUserStreamLimit_EvictsOldestOnNewStream(t *testing.T) {
 		resp, err := http.Get(proxy.URL + "/live/alice/hunter2/1.ts")
 		if err == nil {
 			io.Copy(io.Discard, resp.Body) // nolint: errcheck
-			resp.Body.Close()
+			resp.Body.Close()              // nolint: errcheck
 		}
 		close(firstDone)
 	}()
@@ -437,7 +437,7 @@ func TestPerUserStreamLimit_EvictsOldestOnNewStream(t *testing.T) {
 		resp, err := http.Get(proxy.URL + "/live/alice/hunter2/2.ts")
 		if err == nil {
 			io.Copy(io.Discard, resp.Body) // nolint: errcheck
-			resp.Body.Close()
+			resp.Body.Close()              // nolint: errcheck
 		}
 		close(secondDone)
 	}()

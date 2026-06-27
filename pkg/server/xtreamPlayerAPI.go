@@ -112,7 +112,7 @@ func (c *Config) xtreamXMLTV(ctx *gin.Context) {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

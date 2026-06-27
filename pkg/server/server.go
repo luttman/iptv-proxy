@@ -187,14 +187,14 @@ func (c *Config) marshallInto(into *os.File, playlist *m3u.Playlist, ru resolved
 	for _, track := range playlist.Tracks {
 		var buffer bytes.Buffer
 
-		buffer.WriteString("#EXTINF:")                       // nolint: errcheck
-		buffer.WriteString(fmt.Sprintf("%d ", track.Length)) // nolint: errcheck
+		buffer.WriteString("#EXTINF:")            // nolint: errcheck
+		fmt.Fprintf(&buffer, "%d ", track.Length) // nolint: errcheck
 		for i := range track.Tags {
 			if i == len(track.Tags)-1 {
-				buffer.WriteString(fmt.Sprintf("%s=%q", track.Tags[i].Name, track.Tags[i].Value)) // nolint: errcheck
+				fmt.Fprintf(&buffer, "%s=%q", track.Tags[i].Name, track.Tags[i].Value) // nolint: errcheck
 				continue
 			}
-			buffer.WriteString(fmt.Sprintf("%s=%q ", track.Tags[i].Name, track.Tags[i].Value)) // nolint: errcheck
+			fmt.Fprintf(&buffer, "%s=%q ", track.Tags[i].Name, track.Tags[i].Value) // nolint: errcheck
 		}
 
 		uri, err := c.replaceURL(track.URI, ru)
@@ -203,7 +203,7 @@ func (c *Config) marshallInto(into *os.File, playlist *m3u.Playlist, ru resolved
 			continue
 		}
 
-		into.WriteString(fmt.Sprintf("%s, %s\n%s\n", buffer.String(), track.Name, uri)) // nolint: errcheck
+		fmt.Fprintf(into, "%s, %s\n%s\n", buffer.String(), track.Name, uri) // nolint: errcheck
 
 		filteredTrack = append(filteredTrack, track)
 	}

@@ -96,7 +96,7 @@ func (s *Store) ListXtreamCodes() ([]XtreamCode, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list xtream codes: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() // nolint: errcheck
 
 	var codes []XtreamCode
 	for rows.Next() {
