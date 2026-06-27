@@ -1,18 +1,55 @@
-# Iptv Proxy
+# iptv-proxy
 
-[![Actions Status](https://github.com/pierre-emmanuelJ/iptv-proxy/workflows/CI/badge.svg)](https://github.com/pierre-emmanuelJ/iptv-proxy/actions?query=workflow%3ACI)
+[![Actions Status](https://github.com/luttman/iptv-proxy/workflows/CI/badge.svg)](https://github.com/luttman/iptv-proxy/actions?query=workflow%3ACI)
 
-## Description
+A reverse proxy for Xtream-codes IPTV services. It sits between your
+IPTV players and one or more upstream Xtream-codes providers, hiding
+the real upstream credentials behind proxy logins you create and
+manage yourself.
 
-Iptv-Proxy proxies one or more Xtream-codes IPTV backends, hiding
-their real credentials behind proxy logins of your own choosing.
+It is multi-tenant: any number of proxy users can be created, each
+assigned to exactly one upstream backend, managed through a built-in
+web admin UI. Two users assigned to two different backends are fully
+isolated from each other — neither ever sees the other's upstream
+credentials.
 
-It's multi-user: each proxy login is assigned to exactly one upstream
-Xtream-code backend, and both users and backends are managed through a
-built-in web admin UI — no redeploying with new flags every time
-someone is added.
+## About this fork
 
-Supports live, VOD, series, and full EPG.
+This is a fork of [pierre-emmanuelJ/iptv-proxy](https://github.com/pierre-emmanuelJ/iptv-proxy),
+which is a single-user, single-backend proxy configured entirely
+through CLI flags. This fork rebuilds that into a multi-user,
+multi-backend service with persistent storage and an admin UI on top
+of the original project's Xtream-codes proxying logic. The notable
+differences from upstream:
+
+- **Multi-user, multi-backend.** Users and upstream Xtream-code
+  backends are stored in SQLite and managed at runtime through
+  `/admin`, instead of one hardcoded user/backend pair set at
+  startup via flags.
+- **Admin web UI.** Server-rendered pages for creating, editing, and
+  deleting users and backends, with a live view of currently active
+  streams (per-user, per-backend, with duration) and the ability to
+  forcibly stop a stuck or stale stream.
+- **Per-user concurrent stream limits.** Each user can be capped to
+  N simultaneous streams; exceeding it evicts that user's oldest
+  stream automatically.
+- **Security hardening.** CSRF protection on all admin mutations,
+  per-IP rate limiting on both admin and proxy login attempts,
+  bcrypt-hashed passwords, `SameSite`/`Secure` session cookies.
+- **Operational hardening.** Graceful shutdown on `SIGTERM`/`SIGINT`,
+  connection-pooled outbound HTTP client, request-scoped timeouts
+  that don't cap long-running streams, structured logging.
+- **Modernized toolchain.** Updated to current Go, refreshed
+  dependencies, vendoring intact, unit and integration test coverage
+  for the proxy, store, and admin packages (previously none).
+- **Removed:** the plain M3U-passthrough mode from upstream. It
+  doesn't fit a model where a user is assigned to one of several
+  Xtream backends, and supporting both would mean two parallel auth
+  paths. If you need that mode, use the upstream project instead.
+
+The underlying Xtream-codes request/response handling (live, VOD,
+series, EPG, HLS) is inherited from upstream and is otherwise
+unchanged.
 
 ## Quick start
 
@@ -29,8 +66,8 @@ credentials above, and:
 
 1. Add an **xtream code** (a name, the upstream base URL, and the
    upstream Xtream username/password).
-2. Add a **user** (a proxy-facing username/password) and assign it to
-   that xtream code.
+2. Add a **user** (a proxy-facing username/password, and optionally a
+   concurrent-stream limit) and assign it to that xtream code.
 
 Give that user's proxy username/password to their IPTV player instead
 of the real upstream credentials. They can point their player at:
@@ -39,13 +76,9 @@ of the real upstream credentials. They can point their player at:
 http://proxyexample.com:8080/get.php?username=<proxy-user>&password=<proxy-pass>&type=m3u_plus&output=ts
 ```
 
-— or use `player_api.php`/`xmltv.php`/the `/live`, `/movie`, `/series`
-endpoints exactly like a normal Xtream-codes server, all proxied
-behind their assigned backend.
-
-Two users can be assigned to two different upstream providers and
-will each only ever see their own backend — neither sees the other's
-upstream credentials.
+or use `player_api.php`, `xmltv.php`, or the `/live`, `/movie`,
+`/series` endpoints exactly like a normal Xtream-codes server, all
+proxied behind their assigned backend.
 
 ## CLI flags
 
@@ -54,18 +87,19 @@ upstream credentials.
 | `--port` | `PORT` | Listening port (default `8080`) |
 | `--advertised-port` | `ADVERTISED_PORT` | Port advertised in proxied URLs, e.g. behind a reverse proxy (defaults to `--port`) |
 | `--hostname` | `HOSTNAME` | Hostname/IP advertised in proxied URLs |
-| `--https` | `HTTPS` | Use `https://` in proxied URLs |
+| `--https` | `HTTPS` | Use `https://` in proxied URLs, and mark cookies `Secure` |
 | `--db-path` | `DB_PATH` | SQLite database file for users and xtream codes (default `./iptv-proxy.db`) |
-| `--admin-user` | `ADMIN_USER` | Admin username for `/admin` (**required**) |
-| `--admin-password` | `ADMIN_PASSWORD` | Admin password for `/admin` (**required**) |
+| `--admin-user` | `ADMIN_USER` | Admin username for `/admin` (required) |
+| `--admin-password` | `ADMIN_PASSWORD` | Admin password for `/admin` (required) |
 | `--m3u-file-name` | `M3U_FILE_NAME` | Filename used in the `Content-Disposition` header of generated M3U files |
 | `--custom-endpoint` | `CUSTOM_ENDPOINT` | Optional path prefix for all routes |
 | `--m3u-cache-expiration` | `M3U_CACHE_EXPIRATION` | Hours to cache a generated M3U file before regenerating it |
 | `--xtream-api-get` | `XTREAM_API_GET` | Generate `get.php` from the Xtream API instead of proxying the upstream `get.php` directly |
 
-Admin sessions are signed with a secret generated at process start —
-restarting the process logs the admin out, but doesn't affect proxy
-users.
+Admin sessions are signed with a secret generated at process start, so
+restarting the process logs the admin out (proxy users are
+unaffected). Both the admin login and proxy login are rate-limited
+per source IP.
 
 ## With Docker
 
@@ -86,25 +120,22 @@ environment:
 ```
 
 ```Shell
-% docker-compose up -d
+docker compose up --build -d
 ```
 
 Then visit `http://localhost:8080/admin` to add backends and users.
 
-## TLS - https with traefik
+## TLS with Traefik
 
-Put files and folders of `./traekik` folder in root repo:
-```Shell
-$ cp -r ./traekik/* .
-```
+Copy the `./traefik` folder's contents into the repo root:
 
 ```Shell
-$ mkdir config \
-        && mkdir -p Traefik/etc/traefik \
-        && mkdir -p Traefik/log
+cp -r ./traefik/* .
+mkdir -p Traefik/etc/traefik Traefik/log
 ```
 
-`docker-compose` sample with traefik:
+`docker-compose` sample with Traefik:
+
 ```Yaml
 version: "3"
 services:
@@ -124,14 +155,10 @@ services:
       - "traefik.http.services.iptv-proxy.loadbalancer.server.port=8080"
     environment:
       DB_PATH: /data/iptv-proxy.db
-      # Iptv-Proxy listening port
       PORT: 8080
-      # Port to expose for Xtream endpoints behind traefik
       ADVERTISED_PORT: 443
-      # Hostname or IP to expose the IPTVs endpoints (for machine not for docker)
       HOSTNAME: iptv.proxyexample.xyz
       GIN_MODE: release
-      # Important to activate https protocol on proxy links
       HTTPS: 1
       ADMIN_USER: admin
       ADMIN_PASSWORD: change-me
@@ -150,29 +177,56 @@ services:
       - ./Traefik/log:/var/log/traefik/
 ```
 
-Replace `iptv.proxyexample.xyz` in `docker-compose.yml` with your desired domain.
+Replace `iptv.proxyexample.xyz` with your own domain, then:
 
 ```Shell
-$ docker-compose up -d
+docker compose up --build -d
 ```
 
-## Installation
+## Building from source
 
-Download latest [release](https://github.com/pierre-emmanuelJ/iptv-proxy/releases)
+```Shell
+go build .
+```
 
-Or
+or, to also run the test suite:
 
-`% go install` in root repository
+```Shell
+go vet ./...
+go test ./...
+```
 
-**ENJOY!**
+Requires Go 1.25+. The SQLite driver ([modernc.org/sqlite](https://gitlab.com/cznic/sqlite))
+is pure Go, so no cgo or C toolchain is needed to build or run this.
 
-## Powered by
+## Security notes
 
-- [cobra](https://github.com/spf13/cobra)
-- [go.xtream-codes](https://github.com/tellytv/go.xtream-codes)
-- [gin](https://github.com/gin-gonic/gin)
-- [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) (pure-Go SQLite, no cgo)
+- Passwords (both admin and proxy users) are bcrypt-hashed; nothing is
+  stored in plaintext except the upstream Xtream credentials, which
+  must be readable to forward requests.
+- Admin and proxy logins are rate-limited per source IP; only failed
+  attempts count against the limit, so a legitimate player hitting
+  auth-protected endpoints repeatedly is never throttled.
+- All admin state-changing requests require a matching CSRF token.
+- Run behind HTTPS (directly or via a reverse proxy like Traefik) and
+  pass `--https` so cookies are marked `Secure`.
 
-Grab me a beer 🍻
+## Project layout
 
-[![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif)](https://www.paypal.com/donate?hosted_button_id=WQAAMQWJPKHUN)
+- `cmd/` — CLI entry point (Cobra/Viper)
+- `pkg/server/` — Xtream-codes proxying, routing, per-request auth
+- `pkg/store/` — SQLite-backed users and xtream-code backends
+- `pkg/admin/` — the `/admin` web UI
+- `pkg/ratelimit/` — the per-IP failure limiter used by both admin and proxy auth
+- `pkg/xtream-proxy/` — thin wrapper around the upstream Xtream-codes client library
+
+## License
+
+GPL-3.0, inherited from the upstream project. See [LICENSE](LICENSE).
+
+## Credits
+
+Built on top of [pierre-emmanuelJ/iptv-proxy](https://github.com/pierre-emmanuelJ/iptv-proxy).
+Also uses [cobra](https://github.com/spf13/cobra), [gin](https://github.com/gin-gonic/gin),
+[go.xtream-codes](https://github.com/tellytv/go.xtream-codes), and
+[modernc.org/sqlite](https://gitlab.com/cznic/sqlite).
