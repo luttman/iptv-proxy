@@ -16,7 +16,7 @@ jobs:
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v6
       with:
-        version: v1.61.0
+        version: v1.64.8
     - name: Run tests and attempt building
       run: |
         export PATH=$(go env GOPATH)/bin:$PATH
