@@ -7,8 +7,10 @@ permissions:
   contents: read
 
 jobs:
-  dependency-review:
+  osv-scan:
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/google/osv-scanner:latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/dependency-review-action@v4
+      - run: osv-scanner scan source --recursive .
