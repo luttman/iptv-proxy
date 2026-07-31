@@ -13,4 +13,4 @@ jobs:
       image: ghcr.io/google/osv-scanner:latest
     steps:
       - uses: actions/checkout@v7
-      - run: osv-scanner scan source --recursive .
+      - run: /osv-scanner scan source --recursive .
