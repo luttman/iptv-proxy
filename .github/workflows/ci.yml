@@ -8,7 +8,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
@@ -25,6 +25,6 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Build the Docker image
       run: docker build . --file Dockerfile --tag iptv-proxy:ci-build
