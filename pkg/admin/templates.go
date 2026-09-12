@@ -240,7 +240,7 @@ const dashboardPage = styleBlock + themeToggle + `
       <span class="help">Every 5 minutes · latest 60 checks</span>
     </div>
     <div class="table-scroll"><table>
-      <tr><th>Backend</th><th>Address</th><th>Status</th><th>Ping</th><th>Uptime</th><th>Recent history</th><th>Checked</th></tr>
+      <tr><th>Backend</th><th>Address</th><th>Status</th><th>Ping</th><th>24h</th><th>7d</th><th>Recent history</th><th>Checked</th></tr>
       <tbody id="healthBody">
       {{range .BackendHealth}}
       <tr>
@@ -248,12 +248,13 @@ const dashboardPage = styleBlock + themeToggle + `
         <td class="mono health-address">{{.BaseURL}}</td>
         <td><span class="status-pill {{if .Up}}status-up{{else}}status-down{{end}}">{{if .Up}}Up{{else}}Down{{end}}</span></td>
         <td class="ping">{{if .Up}}{{.LatencyMS}} ms{{else}}&mdash;{{end}}</td>
-        <td class="uptime">{{.UptimePercent}}%</td>
+        <td class="uptime">{{if .Uptime24hKnown}}{{.Uptime24hPercent}}%{{else}}unknown{{end}}</td>
+        <td class="uptime">{{if .Uptime7dKnown}}{{.Uptime7dPercent}}%{{else}}unknown{{end}}</td>
         <td><div class="health-history" aria-label="Recent uptime history">{{range .History}}<span class="health-bar {{if not .}}down{{end}}" title="{{if .}}Up{{else}}Down{{end}}"></span>{{end}}</div></td>
         <td><span class="health-time" data-checked="{{.CheckedAtUnix}}">just now</span></td>
       </tr>
       {{else}}
-      <tr class="empty-row"><td colspan="7">Waiting for the first health check</td></tr>
+      <tr class="empty-row"><td colspan="8">Waiting for the first health check</td></tr>
       {{end}}
       </tbody>
     </table></div>
@@ -339,7 +340,7 @@ function refreshHealth() {
       document.getElementById('healthCount').textContent = data.online + ' / ' + data.total;
       var body = document.getElementById('healthBody');
       if (data.total === 0) {
-        body.innerHTML = '<tr class="empty-row"><td colspan="7">Waiting for the first health check</td></tr>';
+        body.innerHTML = '<tr class="empty-row"><td colspan="8">Waiting for the first health check</td></tr>';
         return;
       }
       body.innerHTML = data.addresses.map(function (item) {
@@ -348,7 +349,8 @@ function refreshHealth() {
           '<td class="mono health-address">' + escapeHtml(item.BaseURL) + '</td>' +
           '<td><span class="status-pill ' + (item.Up ? 'status-up' : 'status-down') + '">' + status + '</span></td>' +
           '<td class="ping">' + (item.Up ? item.LatencyMS + ' ms' : '&mdash;') + '</td>' +
-          '<td class="uptime">' + item.UptimePercent + '%</td>' +
+          '<td class="uptime">' + (item.Uptime24hKnown ? item.Uptime24hPercent + '%' : 'unknown') + '</td>' +
+          '<td class="uptime">' + (item.Uptime7dKnown ? item.Uptime7dPercent + '%' : 'unknown') + '</td>' +
           '<td><div class="health-history" aria-label="Recent uptime history">' + healthHistory(item.History) + '</div></td>' +
           '<td><span class="health-time" data-checked="' + item.CheckedAtUnix + '">just now</span></td></tr>';
       }).join('');

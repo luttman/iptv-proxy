@@ -30,12 +30,17 @@ import (
 
 // Store wraps a SQLite database holding users and xtream codes.
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	key []byte
 }
 
 // Open opens (creating if needed) the SQLite database at path and
-// ensures the schema exists.
-func Open(path string) (*Store, error) {
+// ensures the schema exists. key, if non-nil, is a 32-byte AES-256
+// key used to encrypt/decrypt xtream-code credentials at rest; pass
+// nil to store credentials in plaintext (or to read a database that
+// has none encrypted yet). Open refuses to return a Store if the
+// database holds encrypted credentials but key is nil or incorrect.
+func Open(path string, key []byte) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
@@ -45,8 +50,13 @@ func Open(path string) (*Store, error) {
 	// avoids "database is locked" errors under concurrent requests.
 	db.SetMaxOpenConns(1)
 
-	s := &Store{db: db}
+	s := &Store{db: db, key: key}
 	if err := s.migrate(); err != nil {
+		db.Close() // nolint: errcheck
+		return nil, err
+	}
+
+	if err := s.checkEncryptionKey(); err != nil {
 		db.Close() // nolint: errcheck
 		return nil, err
 	}
@@ -78,6 +88,16 @@ CREATE TABLE IF NOT EXISTS users (
 	max_concurrent_streams INTEGER NOT NULL DEFAULT 1,
 	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS upstream_checks (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	xtream_code_id INTEGER NOT NULL,
+	address TEXT NOT NULL,
+	checked_at TIMESTAMP NOT NULL,
+	up INTEGER NOT NULL,
+	latency_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_upstream_checks_lookup ON upstream_checks(xtream_code_id, address, checked_at);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
@@ -93,4 +113,31 @@ CREATE TABLE IF NOT EXISTS users (
 	}
 
 	return nil
+}
+
+// checkEncryptionKey verifies that every stored credential can be
+// decrypted with s.key, refusing to proceed otherwise. This turns a
+// missing/wrong key into a startup failure instead of silent garbage
+// credentials being used against upstream backends.
+func (s *Store) checkEncryptionKey() error {
+	rows, err := s.db.Query(`SELECT xtream_user, xtream_password FROM xtream_codes`)
+	if err != nil {
+		return fmt.Errorf("check encryption key: %w", err)
+	}
+	defer rows.Close() // nolint: errcheck
+
+	for rows.Next() {
+		var user, pass string
+		if err := rows.Scan(&user, &pass); err != nil {
+			return fmt.Errorf("check encryption key: %w", err)
+		}
+		if _, err := decryptValue(s.key, user); err != nil {
+			return err
+		}
+		if _, err := decryptValue(s.key, pass); err != nil {
+			return err
+		}
+	}
+
+	return rows.Err()
 }

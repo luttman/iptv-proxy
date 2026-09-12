@@ -86,6 +86,12 @@ type Config struct {
 	upstreamHealth     map[string]UpstreamHealth
 	upstreamHealthLock sync.RWMutex
 
+	// currentAddress remembers, per backend, the address failover last
+	// picked, so selection can favor stability over chasing marginally
+	// lower latency (see switchLatencyMarginMS).
+	currentAddress     map[string]string
+	currentAddressLock sync.Mutex
+
 	// httpClient is shared across every proxied stream/API request so
 	// upstream connections get pooled and reused instead of paying a
 	// fresh TCP/TLS handshake on every channel switch. Its Transport

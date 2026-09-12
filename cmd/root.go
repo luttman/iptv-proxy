@@ -48,7 +48,12 @@ var rootCmd = &cobra.Command{
 			log.Fatal("--admin-user and --admin-password (or ADMIN_USER/ADMIN_PASSWORD) are required")
 		}
 
-		st, err := store.Open(viper.GetString("db-path"))
+		key, err := store.LoadEncryptionKey(viper.GetString("encryption-key-file"), viper.GetString("encryption-key"))
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		st, err := store.Open(viper.GetString("db-path"), key)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -102,6 +107,7 @@ func init() {
 	// will be global for your application.
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "iptv-proxy-config", "C", "Config file (default is $HOME/.iptv-proxy.yaml)")
 	rootCmd.Flags().StringP("db-path", "", "./iptv-proxy.db", "Path to the SQLite database file storing users and xtream-code backends")
+	rootCmd.Flags().StringP("encryption-key-file", "", "", "Path to a mounted secret file holding the 32-byte AES-256 key used to encrypt upstream credentials at rest (or set ENCRYPTION_KEY)")
 	rootCmd.Flags().StringP("admin-user", "", "", "Admin username for the /admin management UI (required)")
 	rootCmd.Flags().StringP("admin-password", "", "", "Admin password for the /admin management UI (required)")
 	rootCmd.Flags().StringP("m3u-file-name", "", "iptv.m3u", `Name of the proxified m3u file e.g "http://proxy.com/iptv.m3u"`)

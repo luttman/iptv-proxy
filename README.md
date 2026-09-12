@@ -97,6 +97,7 @@ proxied behind their assigned backend.
 | `--hostname` | `HOSTNAME` | Hostname/IP advertised in proxied URLs |
 | `--https` | `HTTPS` | Use `https://` in proxied URLs, and mark cookies `Secure` |
 | `--db-path` | `DB_PATH` | SQLite database file for users and xtream codes (default `./iptv-proxy.db`) |
+| `--encryption-key-file` | `ENCRYPTION_KEY` | Path to a mounted secret file (or, via the env var, the key value directly) holding the 32-byte AES-256 key used to encrypt upstream credentials at rest. Omit to store them in plaintext. |
 | `--admin-user` | `ADMIN_USER` | Admin username for `/admin` (required) |
 | `--admin-password` | `ADMIN_PASSWORD` | Admin password for `/admin` (required) |
 | `--m3u-file-name` | `M3U_FILE_NAME` | Filename used in the `Content-Disposition` header of generated M3U files |
@@ -207,11 +208,41 @@ go test ./...
 Requires Go 1.25+. The SQLite driver ([modernc.org/sqlite](https://gitlab.com/cznic/sqlite))
 is pure Go, so no cgo or C toolchain is needed to build or run this.
 
+## Encrypting upstream credentials
+
+Set `--encryption-key-file` (or `ENCRYPTION_KEY`) to a 32-byte AES-256
+key (raw or base64) to encrypt upstream Xtream usernames/passwords at
+rest instead of storing them in plaintext. Generate one with:
+
+```Shell
+openssl rand -base64 32 > /run/secrets/iptv-proxy.key
+```
+
+For an existing database with plaintext credentials, run the
+migration once (it backs up the database file to
+`<db-path>.bak-<timestamp>` before touching anything, and applies the
+change in a single transaction):
+
+```Shell
+iptv-proxy encrypt-credentials --db-path ./iptv-proxy.db --encryption-key-file /run/secrets/iptv-proxy.key
+```
+
+The process refuses to start if the database holds encrypted
+credentials but the key is missing or wrong, rather than risk sending
+garbage credentials upstream.
+
+**Backup and recovery:** the encryption key is not stored in SQLite —
+back it up separately from the database file. Restoring the database
+without its matching key makes the Xtream credentials unrecoverable;
+restoring the key without the database is useless on its own. Keep
+both together in your backup process.
+
 ## Security notes
 
 - Passwords (both admin and proxy users) are bcrypt-hashed; nothing is
   stored in plaintext except the upstream Xtream credentials, which
-  must be readable to forward requests.
+  must be readable to forward requests (unless encrypted at rest, see
+  above).
 - Admin and proxy logins are rate-limited per source IP; only failed
   attempts count against the limit, so a legitimate player hitting
   auth-protected endpoints repeatedly is never throttled.

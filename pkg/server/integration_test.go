@@ -36,7 +36,7 @@ import (
 func newTestServer(t *testing.T) *Config {
 	t.Helper()
 
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"), nil)
 	if err != nil {
 		t.Fatalf("store.Open() error: %v", err)
 	}
@@ -120,6 +120,99 @@ func TestLiveStream_WrongPasswordRejected(t *testing.T) {
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+}
+
+func TestLiveStream_FailsOverToBackupOnServerError(t *testing.T) {
+	var badPath, goodPath string
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		badPath = r.URL.Path
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer bad.Close()
+
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		goodPath = r.URL.Path
+		w.Write([]byte("stream-bytes")) // nolint: errcheck
+	}))
+	defer good.Close()
+
+	c := newTestServer(t)
+	proxy := httptest.NewServer(c.Router)
+	defer proxy.Close()
+
+	xc, err := c.Store.CreateXtreamCode("provider-a", bad.URL+" "+good.URL, "xuser", "xpass")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	// Seed monitoring data so both authentication and the in-request
+	// failover deterministically prefer "bad" first, exercising the
+	// retry path instead of racing which httptest server accepts the
+	// bootstrap TCP probe fastest.
+	c.upstreamHealth["provider-a\x00"+bad.URL] = UpstreamHealth{Up: true, LatencyMS: 1}
+	c.upstreamHealth["provider-a\x00"+good.URL] = UpstreamHealth{Up: true, LatencyMS: 500}
+
+	resp, err := http.Get(proxy.URL + "/live/alice/hunter2/42.ts")
+	if err != nil {
+		t.Fatalf("GET error: %v", err)
+	}
+	defer resp.Body.Close() // nolint: errcheck
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", resp.StatusCode, http.StatusOK, body)
+	}
+	if string(body) != "stream-bytes" {
+		t.Errorf("body = %q, want %q", body, "stream-bytes")
+	}
+	if badPath != "/live/xuser/xpass/42.ts" || goodPath != "/live/xuser/xpass/42.ts" {
+		t.Errorf("backup address did not serve the same account/channel path: bad=%q good=%q", badPath, goodPath)
+	}
+}
+
+func TestLiveStream_DoesNotFailOverOnInvalidCredentials(t *testing.T) {
+	var backupHit bool
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer primary.Close()
+
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backupHit = true
+		w.Write([]byte("stream-bytes")) // nolint: errcheck
+	}))
+	defer backup.Close()
+
+	c := newTestServer(t)
+	proxy := httptest.NewServer(c.Router)
+	defer proxy.Close()
+
+	xc, err := c.Store.CreateXtreamCode("provider-a", primary.URL+" "+backup.URL, "xuser", "xpass")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+
+	c.upstreamHealth["provider-a\x00"+primary.URL] = UpstreamHealth{Up: true, LatencyMS: 1}
+	c.upstreamHealth["provider-a\x00"+backup.URL] = UpstreamHealth{Up: true, LatencyMS: 500}
+
+	resp, err := http.Get(proxy.URL + "/live/alice/hunter2/42.ts")
+	if err != nil {
+		t.Fatalf("GET error: %v", err)
+	}
+	defer resp.Body.Close() // nolint: errcheck
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want %d (a 403 should not trigger failover)", resp.StatusCode, http.StatusForbidden)
+	}
+	if backupHit {
+		t.Error("backup address was contacted for a 403 response; it shouldn't be")
 	}
 }
 

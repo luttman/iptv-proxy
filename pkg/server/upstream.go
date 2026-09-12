@@ -34,6 +34,13 @@ const (
 	upstreamProbeTimeout = 2 * time.Second
 	healthCheckInterval  = 5 * time.Minute
 	recentHealthSamples  = 60
+	uptimeRetention      = 7 * 24 * time.Hour
+
+	// switchLatencyMarginMS is how much faster a candidate address
+	// must be than the currently selected one before failover bothers
+	// switching, to avoid flapping between addresses with near-
+	// identical latency.
+	switchLatencyMarginMS = 50
 )
 
 type probeResult struct {
@@ -43,28 +50,109 @@ type probeResult struct {
 
 // UpstreamHealth is the current and recent status of one backend address.
 type UpstreamHealth struct {
-	Backend       string
-	BaseURL       string
-	Up            bool
-	LatencyMS     int64
-	UptimePercent int
-	CheckedAtUnix int64
-	History       []bool
+	Backend          string
+	BaseURL          string
+	Up               bool
+	LatencyMS        int64
+	CheckedAtUnix    int64
+	History          []bool
+	Uptime24hPercent int
+	Uptime24hKnown   bool
+	Uptime7dPercent  int
+	Uptime7dKnown    bool
 }
 
-// selectUpstream chooses the reachable service with the quickest TCP
-// connection. A TCP probe checks the port the IPTV service actually uses,
-// unlike ICMP ping, which many hosts block.
-func selectUpstream(ctx context.Context, backend store.XtreamCode) (store.XtreamCode, error) {
+// selectUpstream chooses an address for backend, preferring the
+// lowest-latency address recent monitoring found healthy over
+// probing the network on every call. exclude, if non-empty, is
+// skipped (used to fail over away from an address that just failed
+// mid-request). Falls back to a one-off live probe only when there
+// is no monitoring data yet to go on (e.g. right after startup).
+func (c *Config) selectUpstream(ctx context.Context, backend store.XtreamCode, exclude string) (store.XtreamCode, error) {
 	addresses := upstreamAddresses(backend)
+	if exclude != "" {
+		filtered := addresses[:0]
+		for _, a := range addresses {
+			if a != exclude {
+				filtered = append(filtered, a)
+			}
+		}
+		addresses = filtered
+	}
+
+	if len(addresses) == 0 {
+		return backend, errors.New("backend has no other reachable base URL")
+	}
 	if len(addresses) == 1 {
 		backend.BaseURL = strings.TrimRight(addresses[0], "/")
 		return backend, nil
 	}
-	if len(addresses) == 0 {
-		return backend, errors.New("backend has no base URL")
+
+	if best, ok := c.bestKnownAddress(backend.Name, addresses); ok {
+		backend.BaseURL = best
+		return backend, nil
 	}
 
+	return probeAllAndPickFastest(ctx, backend, addresses)
+}
+
+// bestKnownAddress picks the lowest-latency address among those
+// recent monitoring found "up", falling back to the previously
+// selected address when a faster candidate isn't meaningfully faster
+// (avoids unnecessary switching). ok is false when there's no
+// monitoring data at all for any candidate address yet.
+func (c *Config) bestKnownAddress(backendName string, addresses []string) (string, bool) {
+	type candidate struct {
+		addr    string
+		latency int64
+	}
+
+	c.upstreamHealthLock.RLock()
+	var healthy []candidate
+	knownAny := false
+	for _, addr := range addresses {
+		health, seen := c.upstreamHealth[backendName+"\x00"+addr]
+		if !seen {
+			continue
+		}
+		knownAny = true
+		if health.Up {
+			healthy = append(healthy, candidate{addr, health.LatencyMS})
+		}
+	}
+	c.upstreamHealthLock.RUnlock()
+
+	if !knownAny || len(healthy) == 0 {
+		return "", false
+	}
+
+	sort.Slice(healthy, func(i, j int) bool { return healthy[i].latency < healthy[j].latency })
+	best := healthy[0]
+
+	c.currentAddressLock.Lock()
+	defer c.currentAddressLock.Unlock()
+
+	current := c.currentAddress[backendName]
+	for _, cand := range healthy {
+		if cand.addr != current {
+			continue
+		}
+		if cand.latency <= best.latency+switchLatencyMarginMS {
+			return current, true
+		}
+		break
+	}
+
+	if c.currentAddress == nil {
+		c.currentAddress = map[string]string{}
+	}
+	c.currentAddress[backendName] = best.addr
+	return best.addr, true
+}
+
+// probeAllAndPickFastest is the bootstrap fallback used only before
+// any monitoring data exists for a backend's addresses.
+func probeAllAndPickFastest(ctx context.Context, backend store.XtreamCode, addresses []string) (store.XtreamCode, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, upstreamProbeTimeout)
 	defer cancel()
 
@@ -150,11 +238,15 @@ func (c *Config) checkUpstreams(ctx context.Context) {
 		return
 	}
 
-	type target struct{ backend, address string }
+	type target struct {
+		backendID   int64
+		backendName string
+		address     string
+	}
 	var targets []target
 	for _, backend := range backends {
 		for _, address := range upstreamAddresses(backend) {
-			targets = append(targets, target{backend: backend.Name, address: address})
+			targets = append(targets, target{backendID: backend.ID, backendName: backend.Name, address: address})
 		}
 	}
 
@@ -173,10 +265,11 @@ func (c *Config) checkUpstreams(ctx context.Context) {
 	}
 
 	seen := make(map[string]bool, len(targets))
+	now := time.Now()
 	for range targets {
 		result := <-results
-		seen[result.backend+"\x00"+result.address] = true
-		c.recordHealth(result.backend, result.address, result.probeResult)
+		seen[result.backendName+"\x00"+result.address] = true
+		c.recordHealth(result.backendID, result.backendName, result.address, result.probeResult, now)
 	}
 
 	c.upstreamHealthLock.Lock()
@@ -186,46 +279,68 @@ func (c *Config) checkUpstreams(ctx context.Context) {
 		}
 	}
 	c.upstreamHealthLock.Unlock()
+
+	c.Store.PruneUpstreamChecks(now.Add(-uptimeRetention)) // nolint: errcheck
 }
 
-func (c *Config) recordHealth(backend, address string, result probeResult) {
+func (c *Config) recordHealth(backendID int64, backend, address string, result probeResult, checkedAt time.Time) {
+	up := result.baseURL != ""
+	latencyMS := result.delay.Milliseconds()
+	if up && latencyMS == 0 {
+		latencyMS = 1
+	}
+
 	key := backend + "\x00" + address
 	c.upstreamHealthLock.Lock()
-	defer c.upstreamHealthLock.Unlock()
-
 	health := c.upstreamHealth[key]
 	health.Backend = backend
 	health.BaseURL = address
-	health.Up = result.baseURL != ""
-	health.LatencyMS = result.delay.Milliseconds()
-	if health.Up && health.LatencyMS == 0 {
-		health.LatencyMS = 1
-	}
-	health.CheckedAtUnix = time.Now().Unix()
-	health.History = append(health.History, health.Up)
-	if len(health.History) > recentHealthSamples {
-		health.History = health.History[len(health.History)-recentHealthSamples:]
-	}
-
-	up := 0
-	for _, sample := range health.History {
-		if sample {
-			up++
-		}
-	}
-	health.UptimePercent = up * 100 / len(health.History)
+	health.Up = up
+	health.LatencyMS = latencyMS
+	health.CheckedAtUnix = checkedAt.Unix()
 	c.upstreamHealth[key] = health
+	c.upstreamHealthLock.Unlock()
+
+	c.Store.RecordUpstreamCheck(backendID, address, up, latencyMS, checkedAt) // nolint: errcheck
 }
 
-// BackendHealth returns a stable snapshot for the admin UI.
+// BackendHealth returns a stable snapshot for the admin UI, combining
+// the latest in-memory check with persisted 24h/7d uptime and recent
+// history so both survive a restart.
 func (c *Config) BackendHealth() []UpstreamHealth {
+	codes, err := c.Store.ListXtreamCodes()
+	if err != nil {
+		return nil
+	}
+	idByName := make(map[string]int64, len(codes))
+	for _, xc := range codes {
+		idByName[xc.Name] = xc.ID
+	}
+
 	c.upstreamHealthLock.RLock()
 	rows := make([]UpstreamHealth, 0, len(c.upstreamHealth))
 	for _, health := range c.upstreamHealth {
-		health.History = append([]bool(nil), health.History...)
 		rows = append(rows, health)
 	}
 	c.upstreamHealthLock.RUnlock()
+
+	now := time.Now()
+	for i := range rows {
+		id, ok := idByName[rows[i].Backend]
+		if !ok {
+			continue
+		}
+
+		if history, err := c.Store.RecentUpstreamChecks(id, rows[i].BaseURL, recentHealthSamples); err == nil {
+			rows[i].History = history
+		}
+		if pct, known, err := c.Store.UpstreamUptime(id, rows[i].BaseURL, now.Add(-24*time.Hour)); err == nil {
+			rows[i].Uptime24hPercent, rows[i].Uptime24hKnown = pct, known
+		}
+		if pct, known, err := c.Store.UpstreamUptime(id, rows[i].BaseURL, now.Add(-uptimeRetention)); err == nil {
+			rows[i].Uptime7dPercent, rows[i].Uptime7dKnown = pct, known
+		}
+	}
 
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Backend == rows[j].Backend {

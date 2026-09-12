@@ -34,7 +34,7 @@ import (
 func newTestAdminServer(t *testing.T) (*server.Config, *httptest.Server) {
 	t.Helper()
 
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"), nil)
 	if err != nil {
 		t.Fatalf("store.Open() error: %v", err)
 	}

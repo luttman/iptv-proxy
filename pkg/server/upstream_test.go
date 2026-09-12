@@ -34,9 +34,10 @@ func TestSelectUpstreamSkipsUnreachableAddress(t *testing.T) {
 	}
 	defer listener.Close() // nolint: errcheck
 
-	backend, err := selectUpstream(context.Background(), store.XtreamCode{
+	c := newTestConfig(t)
+	backend, err := c.selectUpstream(context.Background(), store.XtreamCode{
 		BaseURL: "http://127.0.0.1:1\nhttp://" + listener.Addr().String(),
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("selectUpstream() error: %v", err)
 	}
@@ -47,7 +48,8 @@ func TestSelectUpstreamSkipsUnreachableAddress(t *testing.T) {
 }
 
 func TestSelectUpstreamKeepsSingleAddress(t *testing.T) {
-	backend, err := selectUpstream(context.Background(), store.XtreamCode{BaseURL: "http://example.com/"})
+	c := newTestConfig(t)
+	backend, err := c.selectUpstream(context.Background(), store.XtreamCode{BaseURL: "http://example.com/"}, "")
 	if err != nil {
 		t.Fatalf("selectUpstream() error: %v", err)
 	}
@@ -56,21 +58,177 @@ func TestSelectUpstreamKeepsSingleAddress(t *testing.T) {
 	}
 }
 
-func TestRecordHealthKeepsRecentUptime(t *testing.T) {
-	c := &Config{upstreamHealth: map[string]UpstreamHealth{}}
-	for i := 0; i < recentHealthSamples+10; i++ {
-		result := probeResult{delay: 12 * time.Millisecond}
-		if i%2 == 0 {
-			result.baseURL = "http://example.com"
-		}
-		c.recordHealth("provider", "http://example.com", result)
+func TestSelectUpstreamUsesMonitoringResultsWithoutProbing(t *testing.T) {
+	c := newTestConfig(t)
+	backend := store.XtreamCode{Name: "acme", BaseURL: "http://slow.invalid http://fast.invalid"}
+
+	// Neither address is actually reachable; if selectUpstream fell
+	// back to probing it would fail. Seed monitoring data instead.
+	c.upstreamHealth["acme\x00http://slow.invalid"] = UpstreamHealth{Up: true, LatencyMS: 200}
+	c.upstreamHealth["acme\x00http://fast.invalid"] = UpstreamHealth{Up: true, LatencyMS: 10}
+
+	got, err := c.selectUpstream(context.Background(), backend, "")
+	if err != nil {
+		t.Fatalf("selectUpstream() error: %v", err)
+	}
+	if got.BaseURL != "http://fast.invalid" {
+		t.Errorf("selectUpstream() = %q, want the lowest-latency known-healthy address", got.BaseURL)
+	}
+}
+
+func TestSelectUpstreamKeepsCurrentWhenDifferenceIsSmall(t *testing.T) {
+	c := newTestConfig(t)
+	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
+
+	c.upstreamHealth["acme\x00http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 40}
+	c.upstreamHealth["acme\x00http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20}
+	c.currentAddress = map[string]string{"acme": "http://a.invalid"}
+
+	got, err := c.selectUpstream(context.Background(), backend, "")
+	if err != nil {
+		t.Fatalf("selectUpstream() error: %v", err)
+	}
+	if got.BaseURL != "http://a.invalid" {
+		t.Errorf("selectUpstream() = %q, want to keep current address within the switch margin", got.BaseURL)
+	}
+}
+
+func TestSelectUpstreamSwitchesWhenDifferenceIsLarge(t *testing.T) {
+	c := newTestConfig(t)
+	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
+
+	c.upstreamHealth["acme\x00http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 500}
+	c.upstreamHealth["acme\x00http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20}
+	c.currentAddress = map[string]string{"acme": "http://a.invalid"}
+
+	got, err := c.selectUpstream(context.Background(), backend, "")
+	if err != nil {
+		t.Fatalf("selectUpstream() error: %v", err)
+	}
+	if got.BaseURL != "http://b.invalid" {
+		t.Errorf("selectUpstream() = %q, want to switch to the much faster address", got.BaseURL)
+	}
+}
+
+func TestSelectUpstreamExcludesFailedAddress(t *testing.T) {
+	c := newTestConfig(t)
+	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
+
+	c.upstreamHealth["acme\x00http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 5}
+	c.upstreamHealth["acme\x00http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 100}
+
+	got, err := c.selectUpstream(context.Background(), backend, "http://a.invalid")
+	if err != nil {
+		t.Fatalf("selectUpstream() error: %v", err)
+	}
+	if got.BaseURL != "http://b.invalid" {
+		t.Errorf("selectUpstream() = %q, want the other backup address", got.BaseURL)
+	}
+}
+
+func TestSelectUpstreamStaleDataStillUsed(t *testing.T) {
+	c := newTestConfig(t)
+	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
+
+	// Data from well outside the health-check interval is still the
+	// best information available and should still be honored, rather
+	// than triggering a live probe on every request.
+	c.upstreamHealth["acme\x00http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20, CheckedAtUnix: time.Now().Add(-2 * time.Hour).Unix()}
+	c.upstreamHealth["acme\x00http://b.invalid"] = UpstreamHealth{Up: false, LatencyMS: 0, CheckedAtUnix: time.Now().Add(-2 * time.Hour).Unix()}
+
+	got, err := c.selectUpstream(context.Background(), backend, "")
+	if err != nil {
+		t.Fatalf("selectUpstream() error: %v", err)
+	}
+	if got.BaseURL != "http://a.invalid" {
+		t.Errorf("selectUpstream() = %q, want the only known-healthy (if stale) address", got.BaseURL)
+	}
+}
+
+func TestSelectUpstreamCancellation(t *testing.T) {
+	c := newTestConfig(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// No monitoring data at all forces the bootstrap probe fallback,
+	// which must respect a canceled context instead of hanging.
+	_, err := c.selectUpstream(ctx, store.XtreamCode{BaseURL: "http://a.invalid http://b.invalid"}, "")
+	if err == nil {
+		t.Error("selectUpstream() with canceled context: want error, got nil")
+	}
+}
+
+func TestRecordHealthPersistsToStore(t *testing.T) {
+	c := newTestConfig(t)
+	xc, err := c.Store.CreateXtreamCode("provider-a", "http://example.com", "u", "p")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+
+	now := time.Now()
+	c.recordHealth(xc.ID, "provider-a", "http://example.com", probeResult{baseURL: "http://example.com", delay: 12 * time.Millisecond}, now)
+	c.recordHealth(xc.ID, "provider-a", "http://example.com", probeResult{}, now.Add(time.Minute))
+
+	pct, ok, err := c.Store.UpstreamUptime(xc.ID, "http://example.com", now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("UpstreamUptime() error: %v", err)
+	}
+	if !ok || pct != 50 {
+		t.Errorf("UpstreamUptime() = %d, %v, want 50, true", pct, ok)
 	}
 
 	health := c.BackendHealth()
-	if len(health) != 1 || len(health[0].History) != recentHealthSamples {
-		t.Fatalf("BackendHealth() = %+v, want one row with %d samples", health, recentHealthSamples)
+	if len(health) != 1 {
+		t.Fatalf("BackendHealth() = %+v, want one row", health)
 	}
-	if health[0].UptimePercent != 50 {
-		t.Errorf("UptimePercent = %d, want 50", health[0].UptimePercent)
+	if len(health[0].History) != 2 {
+		t.Errorf("History = %+v, want 2 entries", health[0].History)
+	}
+	if !health[0].Uptime24hKnown || health[0].Uptime24hPercent != 50 {
+		t.Errorf("Uptime24h = %d known=%v, want 50 true", health[0].Uptime24hPercent, health[0].Uptime24hKnown)
+	}
+}
+
+func TestUpstreamUptimeUnknownWithoutChecks(t *testing.T) {
+	c := newTestConfig(t)
+	xc, err := c.Store.CreateXtreamCode("provider-a", "http://example.com", "u", "p")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+
+	_, ok, err := c.Store.UpstreamUptime(xc.ID, "http://example.com", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("UpstreamUptime() error: %v", err)
+	}
+	if ok {
+		t.Error("UpstreamUptime() with no recorded checks should be unknown, not 0%")
+	}
+}
+
+func TestPruneUpstreamChecksRemovesOldSamples(t *testing.T) {
+	c := newTestConfig(t)
+	xc, err := c.Store.CreateXtreamCode("provider-a", "http://example.com", "u", "p")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+
+	old := time.Now().Add(-10 * 24 * time.Hour)
+	if err := c.Store.RecordUpstreamCheck(xc.ID, "http://example.com", true, 5, old); err != nil {
+		t.Fatalf("RecordUpstreamCheck() error: %v", err)
+	}
+	if err := c.Store.RecordUpstreamCheck(xc.ID, "http://example.com", true, 5, time.Now()); err != nil {
+		t.Fatalf("RecordUpstreamCheck() error: %v", err)
+	}
+
+	if err := c.Store.PruneUpstreamChecks(time.Now().Add(-uptimeRetention)); err != nil {
+		t.Fatalf("PruneUpstreamChecks() error: %v", err)
+	}
+
+	history, err := c.Store.RecentUpstreamChecks(xc.ID, "http://example.com", 10)
+	if err != nil {
+		t.Fatalf("RecentUpstreamChecks() error: %v", err)
+	}
+	if len(history) != 1 {
+		t.Errorf("RecentUpstreamChecks() = %+v, want 1 entry after pruning", history)
 	}
 }

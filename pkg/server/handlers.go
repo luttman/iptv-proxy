@@ -39,17 +39,26 @@ func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 	reqCtx, cancel := context.WithCancel(ctx.Request.Context())
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, "GET", oriURL.String(), nil)
-	if err != nil {
-		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
-		return
+	resp, err := c.doUpstreamRequest(reqCtx, ctx, oriURL)
+	if err != nil || resp.StatusCode >= http.StatusInternalServerError {
+		// Nothing has been written to the client yet, so it's still
+		// safe to fail over to another address: connect failures,
+		// timeouts before a response, and server errors are transient
+		// upstream problems, not something a different address would
+		// also return (invalid credentials, a missing channel, and
+		// connection-limit responses come back as 4xx and are left
+		// alone here).
+		if resp != nil {
+			resp.Body.Close() // nolint: errcheck
+		}
+		if altURL, ok := c.failoverURL(reqCtx, oriURL, ru); ok {
+			if altResp, altErr := c.doUpstreamRequest(reqCtx, ctx, altURL); altErr == nil {
+				resp, err = altResp, nil
+			}
+		}
 	}
-
-	mergeHttpHeader(req.Header, ctx.Request.Header)
-
-	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
+		ctx.AbortWithError(http.StatusBadGateway, err) // nolint: errcheck
 		return
 	}
 	defer resp.Body.Close() // nolint: errcheck
@@ -63,6 +72,46 @@ func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 		io.Copy(w, resp.Body) // nolint: errcheck
 		return false
 	})
+}
+
+func (c *Config) doUpstreamRequest(reqCtx context.Context, ctx *gin.Context, oriURL *url.URL) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(reqCtx, "GET", oriURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	mergeHttpHeader(req.Header, ctx.Request.Header)
+
+	return c.httpClient.Do(req)
+}
+
+// failoverURL rebuilds oriURL against another of ru.Backend's
+// addresses (the same account and channel path, just a different
+// host), for retrying a request whose upstream just failed.
+func (c *Config) failoverURL(ctx context.Context, oriURL *url.URL, ru resolvedUser) (*url.URL, bool) {
+	failed := strings.TrimRight(oriURL.Scheme+"://"+oriURL.Host, "/")
+
+	// ru.Backend.BaseURL was already narrowed to a single chosen
+	// address at auth time; re-fetch the backend to get back its full
+	// list of addresses to fail over among.
+	backend, err := c.Store.GetXtreamCode(ru.Backend.ID)
+	if err != nil {
+		return nil, false
+	}
+
+	alt, err := c.selectUpstream(ctx, backend, failed)
+	if err != nil {
+		return nil, false
+	}
+
+	altBase, err := url.Parse(alt.BaseURL)
+	if err != nil {
+		return nil, false
+	}
+
+	newURL := *oriURL
+	newURL.Scheme = altBase.Scheme
+	newURL.Host = altBase.Host
+	return &newURL, true
 }
 
 func (c *Config) xtreamStream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
@@ -124,7 +173,7 @@ func (c *Config) authenticate(ctx *gin.Context) {
 		return
 	}
 	c.authLimiter.RecordSuccess(ip)
-	xc, err = selectUpstream(ctx.Request.Context(), xc)
+	xc, err = c.selectUpstream(ctx.Request.Context(), xc, "")
 	if err != nil {
 		ctx.AbortWithError(http.StatusBadGateway, err) // nolint: errcheck
 		return
@@ -165,7 +214,7 @@ func (c *Config) appAuthenticate(ctx *gin.Context) {
 		return
 	}
 	c.authLimiter.RecordSuccess(ip)
-	xc, err = selectUpstream(ctx.Request.Context(), xc)
+	xc, err = c.selectUpstream(ctx.Request.Context(), xc, "")
 	if err != nil {
 		ctx.AbortWithError(http.StatusBadGateway, err) // nolint: errcheck
 		return

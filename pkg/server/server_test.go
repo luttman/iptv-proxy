@@ -33,7 +33,7 @@ import (
 func newTestConfig(t *testing.T) *Config {
 	t.Helper()
 
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"), nil)
 	if err != nil {
 		t.Fatalf("store.Open() error: %v", err)
 	}
@@ -50,6 +50,7 @@ func newTestConfig(t *testing.T) *Config {
 		Store:                  st,
 		hlsChannelsRedirectURL: map[string]hlsRedirect{},
 		xtreamM3uCache:         map[string]cacheMeta{},
+		upstreamHealth:         map[string]UpstreamHealth{},
 	}
 }
 
