@@ -73,7 +73,7 @@ When a backend has multiple base URLs, enter one URL per line. The proxy
 checks their service ports in parallel for each new request and uses the
 reachable URL with the lowest connection latency.
 
-The admin dashboard checks every configured address every 30 seconds and
+The admin dashboard checks every configured address every 5 minutes and
 shows its current status, connection latency, and uptime over the latest
 60 checks. This recent history resets when the proxy restarts.
 

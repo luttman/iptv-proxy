@@ -32,7 +32,7 @@ import (
 
 const (
 	upstreamProbeTimeout = 2 * time.Second
-	healthCheckInterval  = 30 * time.Second
+	healthCheckInterval  = 5 * time.Minute
 	recentHealthSamples  = 60
 )
 

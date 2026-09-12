@@ -178,7 +178,7 @@ const styleBlock = `<title>iptv-proxy admin</title>` + themeInit + `
   @media (max-width: 640px) {
     body { padding-inline: 1rem; }
     header.topbar { align-items: flex-start; }
-    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; }
     .stat-card { min-width: 0; padding: 0.8rem; }
     .stat-card .value { font-size: 1.45rem; }
     .panel { padding: 1rem; }
@@ -221,10 +221,6 @@ const dashboardPage = styleBlock + themeToggle + `
 
   <div class="stats">
     <div class="stat-card">
-      <div class="value" id="streamCount">{{len .ActiveStreams}}</div>
-      <div class="label">Active streams</div>
-    </div>
-    <div class="stat-card">
       <div class="value">{{len .XtreamCodes}}</div>
       <div class="label">Xtream codes</div>
     </div>
@@ -241,7 +237,7 @@ const dashboardPage = styleBlock + themeToggle + `
   <div class="panel">
     <div class="panel-header">
       <h2>Upstream health</h2>
-      <span class="help">Every 30 seconds · latest 60 checks</span>
+      <span class="help">Every 5 minutes · latest 60 checks</span>
     </div>
     <div class="table-scroll"><table>
       <tr><th>Backend</th><th>Address</th><th>Status</th><th>Ping</th><th>Uptime</th><th>Recent history</th><th>Checked</th></tr>
@@ -258,26 +254,6 @@ const dashboardPage = styleBlock + themeToggle + `
       </tr>
       {{else}}
       <tr class="empty-row"><td colspan="7">Waiting for the first health check</td></tr>
-      {{end}}
-      </tbody>
-    </table></div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-header"><h2>Active streams</h2></div>
-    <div class="table-scroll"><table id="streamsTable">
-      <tr><th>User</th><th>Backend</th><th>Path</th><th>Duration</th><th></th></tr>
-      <tbody id="streamsBody">
-      {{range .ActiveStreams}}
-      <tr>
-        <td>{{.ProxyUser}}</td>
-        <td>{{.Backend}}</td>
-        <td class="mono">{{.Path}}</td>
-        <td data-started="{{.StartedAtUnix}}" class="duration">0s</td>
-        <td><button type="button" class="btn btn-sm btn-danger" onclick="stopStream({{.ID}})">Stop</button></td>
-      </tr>
-      {{else}}
-      <tr class="empty-row"><td colspan="5">No active streams</td></tr>
       {{end}}
       </tbody>
     </table></div>
@@ -337,28 +313,6 @@ const dashboardPage = styleBlock + themeToggle + `
 </div>
 
 <script>
-var CSRF_TOKEN = {{.CSRFToken}};
-
-function fmtDuration(seconds) {
-  seconds = Math.max(0, Math.floor(seconds));
-  var h = Math.floor(seconds / 3600);
-  var m = Math.floor((seconds % 3600) / 60);
-  var s = seconds % 60;
-  var parts = [];
-  if (h > 0) parts.push(h + 'h');
-  if (h > 0 || m > 0) parts.push(m + 'm');
-  parts.push(s + 's');
-  return parts.join(' ');
-}
-
-function tickDurations() {
-  document.querySelectorAll('#streamsBody .duration').forEach(function (cell) {
-    var started = parseInt(cell.getAttribute('data-started'), 10);
-    if (!started) return;
-    cell.textContent = fmtDuration(Date.now() / 1000 - started);
-  });
-}
-
 function fmtAgo(unix) {
   var seconds = Math.max(0, Math.floor(Date.now() / 1000 - unix));
   if (seconds < 60) return seconds + 's ago';
@@ -403,51 +357,14 @@ function refreshHealth() {
     .catch(function () {});
 }
 
-function refreshStreams() {
-  fetch('/admin/streams.json', { credentials: 'same-origin' })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      document.getElementById('streamCount').textContent = data.count;
-      var body = document.getElementById('streamsBody');
-      if (data.count === 0) {
-        body.innerHTML = '<tr class="empty-row"><td colspan="5">No active streams</td></tr>';
-        return;
-      }
-      var rows = data.streams.map(function (s) {
-        return '<tr><td>' + escapeHtml(s.ProxyUser) + '</td><td>' + escapeHtml(s.Backend) +
-          '</td><td class="mono">' + escapeHtml(s.Path) + '</td>' +
-          '<td data-started="' + s.StartedAtUnix + '" class="duration">0s</td>' +
-          '<td><button type="button" class="btn btn-sm btn-danger" onclick="stopStream(' + s.ID + ')">Stop</button></td></tr>';
-      });
-      body.innerHTML = rows.join('');
-      tickDurations();
-    })
-    .catch(function () {});
-}
-
-function stopStream(id) {
-  if (!confirm('Stop this active stream?')) return;
-  fetch('/admin/streams/' + id + '/stop', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'csrf_token=' + encodeURIComponent(CSRF_TOKEN)
-  })
-    .then(function () { refreshStreams(); })
-    .catch(function () {});
-}
-
 function escapeHtml(s) {
   var div = document.createElement('div');
   div.textContent = s;
   return div.innerHTML;
 }
 
-tickDurations();
 tickHealthTimes();
-setInterval(tickDurations, 1000);
 setInterval(tickHealthTimes, 1000);
-setInterval(refreshStreams, 5000);
 setInterval(refreshHealth, 10000);
 </script>
 `
