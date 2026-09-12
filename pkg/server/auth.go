@@ -85,6 +85,11 @@ func (c *Config) resolveFromPath(ctx *gin.Context) (resolvedUser, bool) {
 		return resolvedUser{}, false
 	}
 	c.authLimiter.RecordSuccess(ip)
+	xc, err = selectUpstream(ctx.Request.Context(), xc)
+	if err != nil {
+		ctx.AbortWithError(http.StatusBadGateway, err) // nolint: errcheck
+		return resolvedUser{}, false
+	}
 
 	return resolvedUser{ProxyUser: user.Username, ProxyPassword: proxyPass, Backend: xc, MaxConcurrentStreams: user.MaxConcurrentStreams}, true
 }

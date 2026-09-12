@@ -64,10 +64,14 @@ iptv-proxy --port 8080 \
 Then open `http://proxyexample.com:8080/admin`, log in with the admin
 credentials above, and:
 
-1. Add an **xtream code** (a name, the upstream base URL, and the
+1. Add an **xtream code** (a name, one or more upstream base URLs, and the
    upstream Xtream username/password).
 2. Add a **user** (a proxy-facing username/password, and optionally a
    concurrent-stream limit) and assign it to that xtream code.
+
+When a backend has multiple base URLs, enter one URL per line. The proxy
+checks their service ports in parallel for each new request and uses the
+reachable URL with the lowest connection latency.
 
 Give that user's proxy username/password to their IPTV player instead
 of the real upstream credentials. They can point their player at:

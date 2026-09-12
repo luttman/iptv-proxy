@@ -124,6 +124,11 @@ func (c *Config) authenticate(ctx *gin.Context) {
 		return
 	}
 	c.authLimiter.RecordSuccess(ip)
+	xc, err = selectUpstream(ctx.Request.Context(), xc)
+	if err != nil {
+		ctx.AbortWithError(http.StatusBadGateway, err) // nolint: errcheck
+		return
+	}
 
 	setResolvedUser(ctx, resolvedUser{ProxyUser: user.Username, ProxyPassword: authReq.Password, Backend: xc, MaxConcurrentStreams: user.MaxConcurrentStreams})
 }
@@ -160,6 +165,11 @@ func (c *Config) appAuthenticate(ctx *gin.Context) {
 		return
 	}
 	c.authLimiter.RecordSuccess(ip)
+	xc, err = selectUpstream(ctx.Request.Context(), xc)
+	if err != nil {
+		ctx.AbortWithError(http.StatusBadGateway, err) // nolint: errcheck
+		return
+	}
 	setResolvedUser(ctx, resolvedUser{ProxyUser: user.Username, ProxyPassword: password, Backend: xc, MaxConcurrentStreams: user.MaxConcurrentStreams})
 
 	ctx.Request.Body = io.NopCloser(bytes.NewReader(contents))

@@ -30,7 +30,7 @@ const themeToggle = `
 </button>
 `
 
-const styleBlock = themeInit + `
+const styleBlock = `<title>iptv-proxy admin</title>` + themeInit + `
 <style>
   :root {
     /* Dark theme (default) */
@@ -41,6 +41,8 @@ const styleBlock = themeInit + `
     --muted: #8d94a3;
     --accent: #7b8cf0;
     --accent-dark: #97a4f3;
+    --accent-soft: rgba(123, 140, 240, 0.12);
+    --success: #4fd1a5;
     --danger: #ef6478;
     --danger-dark: #f4899a;
     --badge-bg: #232a44;
@@ -56,6 +58,8 @@ const styleBlock = themeInit + `
     --muted: #6b7280;
     --accent: #4f63d2;
     --accent-dark: #3b4cb0;
+    --accent-soft: rgba(79, 99, 210, 0.09);
+    --success: #168565;
     --danger: #d3455b;
     --danger-dark: #b8334a;
     --badge-bg: #eef0fb;
@@ -63,19 +67,22 @@ const styleBlock = themeInit + `
     --danger-border: #f6c9d1;
   }
   * { box-sizing: border-box; }
-  html, body { transition: background-color 0.15s ease; }
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  html, body { transition: background-color 0.15s ease, color 0.15s ease; }
   .theme-toggle {
     position: fixed; top: 1rem; right: 1.5rem; z-index: 10;
     background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
-    width: 2.2rem; height: 2.2rem; cursor: pointer; font-size: 1rem; line-height: 1;
+    width: 2.75rem; height: 2.75rem; cursor: pointer; font-size: 1rem; line-height: 1;
+    transition: border-color 0.15s ease, transform 0.15s ease;
   }
   .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle:active { transform: scale(0.96); }
   .theme-toggle .icon-moon { display: none; }
   html[data-theme="light"] .theme-toggle .icon-sun { display: none; }
   html[data-theme="light"] .theme-toggle .icon-moon { display: inline; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg);
+    background: radial-gradient(circle at 50% -20%, var(--accent-soft), transparent 38rem), var(--bg);
     color: var(--text);
     margin: 0;
     padding: 0 1.5rem 3rem;
@@ -85,7 +92,11 @@ const styleBlock = themeInit + `
     display: flex; align-items: center; justify-content: space-between;
     padding: 1.25rem 0; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border);
   }
-  header.topbar h1 { font-size: 1.15rem; font-weight: 600; margin: 0; }
+  header.topbar h1 { font-size: 1.15rem; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
+  .brand-dot {
+    display: inline-block; width: 0.55rem; height: 0.55rem; margin-right: 0.45rem;
+    border-radius: 50%; background: var(--success); box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 14%, transparent);
+  }
   header.topbar nav a { color: var(--muted); text-decoration: none; font-size: 0.9rem; margin-right: 1rem; }
   header.topbar nav a:hover { color: var(--text); }
   .login-shell {
@@ -93,20 +104,23 @@ const styleBlock = themeInit + `
     background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   }
   .login-shell h1 { font-size: 1.2rem; text-align: center; margin-top: 0; }
+  .login-shell .subtitle { margin: -0.45rem 0 1.5rem; color: var(--muted); font-size: 0.82rem; text-align: center; }
   .stats { display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
   .stat-card {
     flex: 1; min-width: 160px; background: var(--panel); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 1rem 1.25rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
   }
-  .stat-card .value { font-size: 1.8rem; font-weight: 700; color: var(--accent); line-height: 1; }
+  .stat-card .value { font-size: 1.8rem; font-weight: 750; color: var(--accent); line-height: 1; font-variant-numeric: tabular-nums; }
   .stat-card .label { font-size: 0.8rem; color: var(--muted); margin-top: 0.3rem; }
   .panel {
     background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 1.25rem 1.5rem; margin-bottom: 1.5rem;
+    padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
   }
   .panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
   .panel-header h2 { font-size: 1rem; font-weight: 600; margin: 0; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .table-scroll { overflow-x: auto; margin: 0 -0.5rem; padding: 0 0.5rem; }
   th, td { text-align: left; padding: 0.55rem 0.5rem; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
   tr:last-child td { border-bottom: none; }
@@ -116,6 +130,7 @@ const styleBlock = themeInit + `
     background: var(--badge-bg); color: var(--accent-dark); font-size: 0.75rem; font-weight: 600;
   }
   .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.82rem; color: var(--muted); }
+  .urls { white-space: pre-line; overflow-wrap: anywhere; min-width: 13rem; }
   form.inline { display: inline; }
   .actions a, .actions button { margin-right: 0.4rem; }
   .error {
@@ -123,38 +138,61 @@ const styleBlock = themeInit + `
     border-radius: var(--radius); padding: 0.6rem 0.9rem; margin-bottom: 1rem; font-size: 0.88rem;
   }
   label { display: block; margin-top: 0.9rem; font-weight: 600; font-size: 0.85rem; }
-  input, select {
+  input, select, textarea {
     padding: 0.5rem 0.6rem; width: 100%; max-width: 360px; margin-top: 0.3rem;
     border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; background: var(--panel); color: var(--text);
   }
-  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  textarea { min-height: 6rem; resize: vertical; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
   .btn {
-    display: inline-block; margin-top: 1.25rem; padding: 0.55rem 1.1rem; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; min-height: 2.5rem;
+    margin-top: 1.25rem; padding: 0.55rem 1.1rem; cursor: pointer;
     border: none; border-radius: 6px; font-size: 0.88rem; font-weight: 600;
     background: var(--accent); color: white;
+    transition: background-color 0.15s ease, transform 0.15s ease;
   }
   .btn:hover { background: var(--accent-dark); }
-  .btn-sm { margin-top: 0; padding: 0.3rem 0.7rem; font-size: 0.8rem; }
+  .btn:active, .btn-link:active { transform: scale(0.97); }
+  .btn-sm { margin-top: 0; min-height: 2.25rem; padding: 0.3rem 0.7rem; font-size: 0.8rem; }
   .btn-danger { background: var(--danger); }
   .btn-danger:hover { background: var(--danger-dark); }
   .btn-link {
-    display: inline-block; padding: 0.3rem 0.7rem; font-size: 0.8rem; font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem;
+    padding: 0.3rem 0.7rem; font-size: 0.8rem; font-weight: 600;
     color: var(--accent); text-decoration: none; border: 1px solid var(--border); border-radius: 6px;
+    transition: background-color 0.15s ease, transform 0.15s ease;
   }
   .btn-link:hover { background: var(--badge-bg); }
   .add-link { font-size: 0.88rem; font-weight: 600; color: var(--accent); text-decoration: none; }
+  .help { max-width: 360px; margin: 0.35rem 0 0; color: var(--muted); font-size: 0.78rem; line-height: 1.45; text-wrap: pretty; }
+  :focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
+  @media (max-width: 640px) {
+    body { padding-inline: 1rem; }
+    header.topbar { align-items: flex-start; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; }
+    .stat-card { min-width: 0; padding: 0.8rem; }
+    .stat-card .value { font-size: 1.45rem; }
+    .panel { padding: 1rem; }
+    .panel-header { align-items: flex-start; gap: 1rem; }
+    th, td { white-space: nowrap; }
+    .urls { white-space: pre-line; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html, body, .theme-toggle, .btn, .btn-link { transition: none; }
+  }
 </style>
 `
 
 const loginPage = styleBlock + themeToggle + `
 <div class="login-shell">
-  <h1>iptv-proxy admin</h1>
+  <h1><span class="brand-dot" aria-hidden="true"></span>iptv-proxy</h1>
+  <p class="subtitle">Admin control panel</p>
   {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
   <form method="post" action="/admin/login">
-    <label>Username</label>
-    <input type="text" name="username" required autofocus>
-    <label>Password</label>
-    <input type="password" name="password" required>
+    <label for="login-username">Username</label>
+    <input id="login-username" type="text" name="username" autocomplete="username" required autofocus>
+    <label for="login-password">Password</label>
+    <input id="login-password" type="password" name="password" autocomplete="current-password" required>
     <button type="submit" class="btn" style="width:100%">Log in</button>
   </form>
 </div>
@@ -163,7 +201,7 @@ const loginPage = styleBlock + themeToggle + `
 const dashboardPage = styleBlock + themeToggle + `
 <div class="wrap">
   <header class="topbar">
-    <h1>iptv-proxy admin</h1>
+    <h1><span class="brand-dot" aria-hidden="true"></span>iptv-proxy</h1>
     <nav>
       <form class="inline" method="post" action="/admin/logout">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -189,7 +227,7 @@ const dashboardPage = styleBlock + themeToggle + `
 
   <div class="panel">
     <div class="panel-header"><h2>Active streams</h2></div>
-    <table id="streamsTable">
+    <div class="table-scroll"><table id="streamsTable">
       <tr><th>User</th><th>Backend</th><th>Path</th><th>Duration</th><th></th></tr>
       <tbody id="streamsBody">
       {{range .ActiveStreams}}
@@ -204,7 +242,7 @@ const dashboardPage = styleBlock + themeToggle + `
       <tr class="empty-row"><td colspan="5">No active streams</td></tr>
       {{end}}
       </tbody>
-    </table>
+    </table></div>
   </div>
 
   <div class="panel">
@@ -212,16 +250,16 @@ const dashboardPage = styleBlock + themeToggle + `
       <h2>Xtream codes</h2>
       <a class="add-link" href="/admin/xtream-codes/new">+ Add xtream code</a>
     </div>
-    <table>
-      <tr><th>Name</th><th>Base URL</th><th>Xtream user</th><th></th></tr>
+    <div class="table-scroll"><table>
+      <tr><th>Name</th><th>Base URLs</th><th>Xtream user</th><th></th></tr>
       {{range .XtreamCodes}}
       <tr>
         <td><span class="badge">{{.Name}}</span></td>
-        <td class="mono">{{.BaseURL}}</td>
+        <td class="mono urls">{{.BaseURL}}</td>
         <td class="mono">{{.XtreamUser}}</td>
         <td class="actions">
           <a class="btn-link" href="/admin/xtream-codes/{{.ID}}/edit">Edit</a>
-          <form class="inline" method="post" action="/admin/xtream-codes/{{.ID}}/delete">
+          <form class="inline" method="post" action="/admin/xtream-codes/{{.ID}}/delete" onsubmit="return confirm('Delete this xtream code?')">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="btn btn-sm btn-danger">Delete</button>
           </form>
@@ -230,7 +268,7 @@ const dashboardPage = styleBlock + themeToggle + `
       {{else}}
       <tr class="empty-row"><td colspan="4">No xtream codes yet</td></tr>
       {{end}}
-    </table>
+    </table></div>
   </div>
 
   <div class="panel">
@@ -238,7 +276,7 @@ const dashboardPage = styleBlock + themeToggle + `
       <h2>Users</h2>
       <a class="add-link" href="/admin/users/new">+ Add user</a>
     </div>
-    <table>
+    <div class="table-scroll"><table>
       <tr><th>Username</th><th>Assigned xtream code</th><th>Max streams</th><th></th></tr>
       {{range .Users}}
       <tr>
@@ -247,7 +285,7 @@ const dashboardPage = styleBlock + themeToggle + `
         <td>{{if .MaxConcurrentStreams}}{{.MaxConcurrentStreams}}{{else}}Unlimited{{end}}</td>
         <td class="actions">
           <a class="btn-link" href="/admin/users/{{.ID}}/edit">Edit</a>
-          <form class="inline" method="post" action="/admin/users/{{.ID}}/delete">
+          <form class="inline" method="post" action="/admin/users/{{.ID}}/delete" onsubmit="return confirm('Delete this user?')">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="btn btn-sm btn-danger">Delete</button>
           </form>
@@ -256,7 +294,7 @@ const dashboardPage = styleBlock + themeToggle + `
       {{else}}
       <tr class="empty-row"><td colspan="4">No users yet</td></tr>
       {{end}}
-    </table>
+    </table></div>
   </div>
 </div>
 
@@ -306,6 +344,7 @@ function refreshStreams() {
 }
 
 function stopStream(id) {
+  if (!confirm('Stop this active stream?')) return;
   fetch('/admin/streams/' + id + '/stop', {
     method: 'POST',
     credentials: 'same-origin',
@@ -336,14 +375,15 @@ const xtreamCodeFormPage = styleBlock + themeToggle + `
     {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>Name</label>
-      <input type="text" name="name" value="{{.Name}}" required>
-      <label>Base URL</label>
-      <input type="text" name="base_url" value="{{.BaseURL}}" placeholder="http://example.tv:8080" required>
-      <label>Xtream username</label>
-      <input type="text" name="xtream_user" value="{{.XtreamUser}}" required>
-      <label>Xtream password</label>
-      <input type="text" name="xtream_password" value="{{.XtreamPassword}}" required>
+      <label for="name">Name</label>
+      <input id="name" type="text" name="name" value="{{.Name}}" autocomplete="off" required autofocus>
+      <label for="base_url">Base URLs</label>
+      <textarea id="base_url" name="base_url" aria-describedby="base-url-help" placeholder="http://primary.example.tv:8080&#10;http://backup.example.tv:8080" required>{{.BaseURL}}</textarea>
+      <p class="help" id="base-url-help">Enter one address per line. The proxy automatically uses the fastest reachable address.</p>
+      <label for="xtream_user">Xtream username</label>
+      <input id="xtream_user" type="text" name="xtream_user" value="{{.XtreamUser}}" autocomplete="off" required>
+      <label for="xtream_password">Xtream password</label>
+      <input id="xtream_password" type="password" name="xtream_password" value="{{.XtreamPassword}}" autocomplete="new-password" required>
       <button type="submit" class="btn">Save</button>
     </form>
   </div>
@@ -358,18 +398,19 @@ const userFormPage = styleBlock + themeToggle + `
     {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>Username</label>
-      <input type="text" name="username" value="{{.Username}}" required>
-      <label>Password{{if .ID}} (leave blank to keep current){{end}}</label>
-      <input type="password" name="password" {{if not .ID}}required{{end}}>
-      <label>Xtream code</label>
-      <select name="xtream_code_id" required>
+      <label for="username">Username</label>
+      <input id="username" type="text" name="username" value="{{.Username}}" autocomplete="off" required autofocus>
+      <label for="password">Password{{if .ID}} (leave blank to keep current){{end}}</label>
+      <input id="password" type="password" name="password" autocomplete="new-password" {{if not .ID}}required{{end}}>
+      <label for="xtream_code_id">Xtream code</label>
+      <select id="xtream_code_id" name="xtream_code_id" required>
         {{range .XtreamCodes}}
         <option value="{{.ID}}" {{if eq .ID $.XtreamCodeID}}selected{{end}}>{{.Name}}</option>
         {{end}}
       </select>
-      <label>Max concurrent streams (0 = unlimited)</label>
-      <input type="number" name="max_concurrent_streams" value="{{.MaxConcurrentStreams}}" min="0" required>
+      <label for="max_concurrent_streams">Max concurrent streams</label>
+      <input id="max_concurrent_streams" type="number" name="max_concurrent_streams" value="{{.MaxConcurrentStreams}}" min="0" aria-describedby="stream-limit-help" required>
+      <p class="help" id="stream-limit-help">Use 0 for unlimited streams.</p>
       <button type="submit" class="btn">Save</button>
     </form>
   </div>
