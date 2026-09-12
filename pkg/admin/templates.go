@@ -131,6 +131,15 @@ const styleBlock = `<title>iptv-proxy admin</title>` + themeInit + `
   }
   .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.82rem; color: var(--muted); }
   .urls { white-space: pre-line; overflow-wrap: anywhere; min-width: 13rem; }
+  .health-address { max-width: 20rem; overflow-wrap: anywhere; }
+  .status-pill { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; font-weight: 700; }
+  .status-pill::before { content: ""; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: currentColor; }
+  .status-up { color: var(--success); }
+  .status-down { color: var(--danger); }
+  .health-history { display: grid; grid-template-columns: repeat(60, minmax(1px, 1fr)); gap: 2px; width: 11rem; height: 1.4rem; }
+  .health-bar { min-width: 1px; border-radius: 2px; background: var(--success); opacity: 0.9; }
+  .health-bar.down { background: var(--danger); }
+  .health-time, .ping, .uptime { font-variant-numeric: tabular-nums; white-space: nowrap; }
   form.inline { display: inline; }
   .actions a, .actions button { margin-right: 0.4rem; }
   .error {
@@ -169,7 +178,7 @@ const styleBlock = `<title>iptv-proxy admin</title>` + themeInit + `
   @media (max-width: 640px) {
     body { padding-inline: 1rem; }
     header.topbar { align-items: flex-start; }
-    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; }
+    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
     .stat-card { min-width: 0; padding: 0.8rem; }
     .stat-card .value { font-size: 1.45rem; }
     .panel { padding: 1rem; }
@@ -223,6 +232,35 @@ const dashboardPage = styleBlock + themeToggle + `
       <div class="value">{{len .Users}}</div>
       <div class="label">Users</div>
     </div>
+    <div class="stat-card">
+      <div class="value" id="healthCount">{{.OnlineBackends}} / {{len .BackendHealth}}</div>
+      <div class="label">Addresses online</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <h2>Upstream health</h2>
+      <span class="help">Every 30 seconds · latest 60 checks</span>
+    </div>
+    <div class="table-scroll"><table>
+      <tr><th>Backend</th><th>Address</th><th>Status</th><th>Ping</th><th>Uptime</th><th>Recent history</th><th>Checked</th></tr>
+      <tbody id="healthBody">
+      {{range .BackendHealth}}
+      <tr>
+        <td><span class="badge">{{.Backend}}</span></td>
+        <td class="mono health-address">{{.BaseURL}}</td>
+        <td><span class="status-pill {{if .Up}}status-up{{else}}status-down{{end}}">{{if .Up}}Up{{else}}Down{{end}}</span></td>
+        <td class="ping">{{if .Up}}{{.LatencyMS}} ms{{else}}&mdash;{{end}}</td>
+        <td class="uptime">{{.UptimePercent}}%</td>
+        <td><div class="health-history" aria-label="Recent uptime history">{{range .History}}<span class="health-bar {{if not .}}down{{end}}" title="{{if .}}Up{{else}}Down{{end}}"></span>{{end}}</div></td>
+        <td><span class="health-time" data-checked="{{.CheckedAtUnix}}">just now</span></td>
+      </tr>
+      {{else}}
+      <tr class="empty-row"><td colspan="7">Waiting for the first health check</td></tr>
+      {{end}}
+      </tbody>
+    </table></div>
   </div>
 
   <div class="panel">
@@ -321,6 +359,50 @@ function tickDurations() {
   });
 }
 
+function fmtAgo(unix) {
+  var seconds = Math.max(0, Math.floor(Date.now() / 1000 - unix));
+  if (seconds < 60) return seconds + 's ago';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+  return Math.floor(seconds / 3600) + 'h ago';
+}
+
+function tickHealthTimes() {
+  document.querySelectorAll('.health-time').forEach(function (cell) {
+    cell.textContent = fmtAgo(parseInt(cell.getAttribute('data-checked'), 10));
+  });
+}
+
+function healthHistory(history) {
+  return history.map(function (up) {
+    return '<span class="health-bar' + (up ? '' : ' down') + '" title="' + (up ? 'Up' : 'Down') + '"></span>';
+  }).join('');
+}
+
+function refreshHealth() {
+  fetch('/admin/health.json', { credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      document.getElementById('healthCount').textContent = data.online + ' / ' + data.total;
+      var body = document.getElementById('healthBody');
+      if (data.total === 0) {
+        body.innerHTML = '<tr class="empty-row"><td colspan="7">Waiting for the first health check</td></tr>';
+        return;
+      }
+      body.innerHTML = data.addresses.map(function (item) {
+        var status = item.Up ? 'Up' : 'Down';
+        return '<tr><td><span class="badge">' + escapeHtml(item.Backend) + '</span></td>' +
+          '<td class="mono health-address">' + escapeHtml(item.BaseURL) + '</td>' +
+          '<td><span class="status-pill ' + (item.Up ? 'status-up' : 'status-down') + '">' + status + '</span></td>' +
+          '<td class="ping">' + (item.Up ? item.LatencyMS + ' ms' : '&mdash;') + '</td>' +
+          '<td class="uptime">' + item.UptimePercent + '%</td>' +
+          '<td><div class="health-history" aria-label="Recent uptime history">' + healthHistory(item.History) + '</div></td>' +
+          '<td><span class="health-time" data-checked="' + item.CheckedAtUnix + '">just now</span></td></tr>';
+      }).join('');
+      tickHealthTimes();
+    })
+    .catch(function () {});
+}
+
 function refreshStreams() {
   fetch('/admin/streams.json', { credentials: 'same-origin' })
     .then(function (r) { return r.json(); })
@@ -362,8 +444,11 @@ function escapeHtml(s) {
 }
 
 tickDurations();
+tickHealthTimes();
 setInterval(tickDurations, 1000);
+setInterval(tickHealthTimes, 1000);
 setInterval(refreshStreams, 5000);
+setInterval(refreshHealth, 10000);
 </script>
 `
 

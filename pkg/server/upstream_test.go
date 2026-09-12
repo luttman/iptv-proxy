@@ -22,6 +22,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
 )
@@ -52,5 +53,24 @@ func TestSelectUpstreamKeepsSingleAddress(t *testing.T) {
 	}
 	if backend.BaseURL != "http://example.com" {
 		t.Errorf("selectUpstream() = %q", backend.BaseURL)
+	}
+}
+
+func TestRecordHealthKeepsRecentUptime(t *testing.T) {
+	c := &Config{upstreamHealth: map[string]UpstreamHealth{}}
+	for i := 0; i < recentHealthSamples+10; i++ {
+		result := probeResult{delay: 12 * time.Millisecond}
+		if i%2 == 0 {
+			result.baseURL = "http://example.com"
+		}
+		c.recordHealth("provider", "http://example.com", result)
+	}
+
+	health := c.BackendHealth()
+	if len(health) != 1 || len(health[0].History) != recentHealthSamples {
+		t.Fatalf("BackendHealth() = %+v, want one row with %d samples", health, recentHealthSamples)
+	}
+	if health[0].UptimePercent != 50 {
+		t.Errorf("UptimePercent = %d, want 50", health[0].UptimePercent)
 	}
 }

@@ -99,6 +99,17 @@ func (a *admin) streamsJSON(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"count": len(rows), "streams": rows})
 }
 
+func (a *admin) healthJSON(ctx *gin.Context) {
+	health := a.srv.BackendHealth()
+	online := 0
+	for _, item := range health {
+		if item.Up {
+			online++
+		}
+	}
+	ctx.JSON(http.StatusOK, gin.H{"online": online, "total": len(health), "addresses": health})
+}
+
 func (a *admin) streamStop(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
@@ -136,13 +147,22 @@ func (a *admin) dashboard(ctx *gin.Context) {
 	for _, u := range users {
 		rows = append(rows, dashboardUserRow{User: u, XtreamCodeName: names[u.XtreamCodeID]})
 	}
+	health := a.srv.BackendHealth()
+	online := 0
+	for _, item := range health {
+		if item.Up {
+			online++
+		}
+	}
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	templates.ExecuteTemplate(ctx.Writer, "dashboard", gin.H{ // nolint: errcheck
-		"XtreamCodes":   codes,
-		"Users":         rows,
-		"ActiveStreams": a.streamRows(),
-		"CSRFToken":     a.csrfToken(ctx),
+		"XtreamCodes":    codes,
+		"Users":          rows,
+		"ActiveStreams":  a.streamRows(),
+		"BackendHealth":  health,
+		"OnlineBackends": online,
+		"CSRFToken":      a.csrfToken(ctx),
 	})
 }
 

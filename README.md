@@ -73,6 +73,10 @@ When a backend has multiple base URLs, enter one URL per line. The proxy
 checks their service ports in parallel for each new request and uses the
 reachable URL with the lowest connection latency.
 
+The admin dashboard checks every configured address every 30 seconds and
+shows its current status, connection latency, and uptime over the latest
+60 checks. This recent history resets when the proxy restarts.
+
 Give that user's proxy username/password to their IPTV player instead
 of the real upstream credentials. They can point their player at:
 
