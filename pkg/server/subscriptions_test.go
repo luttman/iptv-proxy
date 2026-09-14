@@ -94,6 +94,29 @@ func TestFetchSubscriptionExpiryAlreadyExpired(t *testing.T) {
 	}
 }
 
+func TestCheckSubscriptionsNarrowsMultiAddressBackend(t *testing.T) {
+	upstream := xtreamLoginServer(t, fmt.Sprintf("%d", time.Now().Add(24*time.Hour).Unix()))
+	defer upstream.Close()
+
+	c := newTestConfig(t)
+	c.subscriptionExpiry = map[int64]SubscriptionExpiry{}
+
+	// A backend with a failover address list (space/newline separated)
+	// used to be passed to the xtream client as-is, which url.Parse
+	// rejects outright ("invalid control character in URL").
+	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL+"\r\nhttp://unreachable.invalid", "u", "p")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+
+	c.checkSubscriptions(context.Background())
+
+	got, ok := c.SubscriptionExpiries()[xc.ID]
+	if !ok || !got.HasExpiry {
+		t.Errorf("SubscriptionExpiries()[%d] = %+v, ok=%v, want a resolved expiry", xc.ID, got, ok)
+	}
+}
+
 func TestCheckSubscriptionsPopulatesSnapshot(t *testing.T) {
 	upstream := xtreamLoginServer(t, fmt.Sprintf("%d", time.Now().Add(24*time.Hour).Unix()))
 	defer upstream.Close()

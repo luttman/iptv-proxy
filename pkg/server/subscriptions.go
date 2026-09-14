@@ -69,7 +69,16 @@ func (c *Config) checkSubscriptions(ctx context.Context) {
 	}
 
 	for _, backend := range backends {
-		expiry, err := fetchSubscriptionExpiry(ctx, backend)
+		// backend.BaseURL may hold several failover addresses (see
+		// upstreamAddresses); narrow to the one failover would actually
+		// use before logging in.
+		resolved, err := c.selectUpstream(ctx, backend, "")
+		if err != nil {
+			slog.Warn("subscription check failed", "backend", backend.Name, "error", err)
+			continue
+		}
+
+		expiry, err := fetchSubscriptionExpiry(ctx, resolved)
 		if err != nil {
 			slog.Warn("subscription check failed", "backend", backend.Name, "error", err)
 			continue
