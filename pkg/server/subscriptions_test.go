@@ -37,10 +37,10 @@ func xtreamLoginServer(t *testing.T, expUnix string) *httptest.Server {
 		if expUnix != "" {
 			expField = `"` + expUnix + `"`
 		}
-		fmt.Fprintf(w, `{
+		_, _ = fmt.Fprintf(w, `{
 			"user_info": {"username":"u","password":"p","auth":1,"status":"Active","exp_date":%s,"is_trial":"0","active_cons":"0","created_at":"1000","max_connections":"1","allowed_output_formats":["ts"]},
 			"server_info": {"url":"x","port":"80","https_port":"443","server_protocol":"http","rtmp_port":"25462","timezone":"UTC","timestamp_now":1000,"time_now":"2024-01-01 00:00:00"}
-		}`, expField) // nolint: errcheck
+		}`, expField)
 	}))
 }
 
