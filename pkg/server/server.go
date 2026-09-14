@@ -92,6 +92,9 @@ type Config struct {
 	currentAddress     map[string]string
 	currentAddressLock sync.Mutex
 
+	subscriptionExpiry     map[int64]SubscriptionExpiry
+	subscriptionExpiryLock sync.RWMutex
+
 	// httpClient is shared across every proxied stream/API request so
 	// upstream connections get pooled and reused instead of paying a
 	// fresh TCP/TLS handshake on every channel switch. Its Transport
@@ -112,6 +115,7 @@ func NewServer(conf *config.ProxyConfig, st *store.Store) (*Config, error) {
 		streams:                newStreamTracker(),
 		authLimiter:            ratelimit.New(authAttemptLimit, authAttemptWindow),
 		upstreamHealth:         map[string]UpstreamHealth{},
+		subscriptionExpiry:     map[int64]SubscriptionExpiry{},
 		httpClient:             newUpstreamHTTPClient(),
 	}
 
@@ -153,6 +157,7 @@ func (c *Config) Serve() error {
 	healthCtx, stopHealthChecks := context.WithCancel(context.Background())
 	defer stopHealthChecks()
 	go c.monitorUpstreams(healthCtx)
+	go c.monitorSubscriptions(healthCtx)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", c.HostConfig.Port),

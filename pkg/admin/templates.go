@@ -266,12 +266,20 @@ const dashboardPage = styleBlock + themeToggle + `
       <a class="add-link" href="/admin/xtream-codes/new">+ Add xtream code</a>
     </div>
     <div class="table-scroll"><table>
-      <tr><th>Name</th><th>Base URLs</th><th>Xtream user</th><th></th></tr>
+      <tr><th>Name</th><th>Base URLs</th><th>Xtream user</th><th>Expires</th><th></th></tr>
       {{range .XtreamCodes}}
+      {{$exp := index $.SubscriptionExpiries .ID}}
       <tr>
         <td><span class="badge">{{.Name}}</span></td>
         <td class="mono urls">{{.BaseURL}}</td>
         <td class="mono">{{.XtreamUser}}</td>
+        <td>
+          {{if eq $exp.CheckedAtUnix 0}}&mdash;
+          {{else if not $exp.HasExpiry}}Unlimited
+          {{else if le $exp.DaysLeft 0}}<span class="status-pill status-down">Expired</span>
+          {{else}}{{$exp.DaysLeft}} days
+          {{end}}
+        </td>
         <td class="actions">
           <a class="btn-link" href="/admin/xtream-codes/{{.ID}}/edit">Edit</a>
           <form class="inline" method="post" action="/admin/xtream-codes/{{.ID}}/delete" onsubmit="return confirm('Delete this xtream code?')">
@@ -281,7 +289,7 @@ const dashboardPage = styleBlock + themeToggle + `
         </td>
       </tr>
       {{else}}
-      <tr class="empty-row"><td colspan="4">No xtream codes yet</td></tr>
+      <tr class="empty-row"><td colspan="5">No xtream codes yet</td></tr>
       {{end}}
     </table></div>
   </div>

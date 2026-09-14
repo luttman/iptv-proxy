@@ -110,11 +110,12 @@ func (a *admin) dashboard(ctx *gin.Context) {
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	templates.ExecuteTemplate(ctx.Writer, "dashboard", gin.H{ // nolint: errcheck
-		"XtreamCodes":    codes,
-		"Users":          rows,
-		"BackendHealth":  health,
-		"OnlineBackends": online,
-		"CSRFToken":      a.csrfToken(ctx),
+		"XtreamCodes":          codes,
+		"Users":                rows,
+		"BackendHealth":        health,
+		"OnlineBackends":       online,
+		"SubscriptionExpiries": a.srv.SubscriptionExpiries(),
+		"CSRFToken":            a.csrfToken(ctx),
 	})
 }
 
