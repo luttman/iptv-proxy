@@ -177,7 +177,7 @@ const styleBlock = `<meta name="viewport" content="width=device-width, initial-s
   .health-bar { min-width: 1px; border-radius: 2px; background: var(--signal); opacity: 0.9; }
   .health-bar.down { background: var(--danger); }
   .health-time, .ping, .uptime { font-variant-numeric: tabular-nums; white-space: nowrap; }
-  form.inline { display: inline; }
+  form.inline { display: inline; margin: 0; }
   .actions a, .actions button { margin-right: 0.4rem; }
   .error {
     color: var(--danger); background: var(--danger-dim); border: 1px solid var(--danger-border);
