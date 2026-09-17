@@ -41,13 +41,26 @@ type XtreamAddress struct {
 
 // XtreamCredential is one xtream username/password pair under a
 // provider. Several proxy users may share a credential (subject to
-// the provider's own connection limit) or each get their own.
+// the provider's own connection limit) or each get their own. Name is
+// an optional human-friendly label (e.g. "Mom's account") shown in
+// place of the raw xtream username where there's room to; it falls
+// back to XtreamUser when empty.
 type XtreamCredential struct {
 	ID             int64
 	XtreamCodeID   int64
+	Name           string
 	XtreamUser     string
 	XtreamPassword string
 	CreatedAt      time.Time
+}
+
+// Label returns Name if set, else XtreamUser — the string to show
+// wherever a credential needs a single human-readable identifier.
+func (c XtreamCredential) Label() string {
+	if c.Name != "" {
+		return c.Name
+	}
+	return c.XtreamUser
 }
 
 // ResolvedBackend is the single, concrete backend a proxy user's

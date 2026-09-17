@@ -111,7 +111,7 @@ func TestCheckSubscriptionsNarrowsMultiAddressBackend(t *testing.T) {
 	if err := c.Store.AddAddresses(xc.ID, upstream.URL+"\r\nhttp://unreachable.invalid"); err != nil {
 		t.Fatalf("AddAddresses() error: %v", err)
 	}
-	if _, err := c.Store.CreateCredential(xc.ID, "u", "p"); err != nil {
+	if _, err := c.Store.CreateCredential(xc.ID, "", "u", "p"); err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func TestCheckSubscriptionsPopulatesSnapshot(t *testing.T) {
 	if err := c.Store.AddAddresses(xc.ID, upstream.URL); err != nil {
 		t.Fatalf("AddAddresses() error: %v", err)
 	}
-	if _, err := c.Store.CreateCredential(xc.ID, "u", "p"); err != nil {
+	if _, err := c.Store.CreateCredential(xc.ID, "", "u", "p"); err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
 

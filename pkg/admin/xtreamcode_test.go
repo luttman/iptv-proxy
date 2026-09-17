@@ -136,6 +136,45 @@ func TestXtreamCodeAddresses_BulkAddThenToggle(t *testing.T) {
 	}
 }
 
+func TestCredentialUpdate_RenamesAndKeepsPasswordWhenBlank(t *testing.T) {
+	srv, ts := newTestAdminServer(t)
+	client, token := newLoggedInClient(t, ts.URL)
+
+	xc, err := srv.Store.CreateXtreamCode("provider-a")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	cred, err := srv.Store.CreateCredential(xc.ID, "Old name", "olduser", "oldpass")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+
+	resp, err := client.PostForm(fmt.Sprintf("%s/admin/xtream-codes/%d/credentials/%d/edit", ts.URL, xc.ID, cred.ID), url.Values{
+		"name":            {"New name"},
+		"xtream_user":     {"newuser"},
+		"xtream_password": {""},
+		"csrf_token":      {token},
+	})
+	if err != nil {
+		t.Fatalf("POST credential edit error: %v", err)
+	}
+	resp.Body.Close() // nolint: errcheck
+
+	got, err := srv.Store.GetCredential(cred.ID)
+	if err != nil {
+		t.Fatalf("GetCredential() error: %v", err)
+	}
+	if got.Name != "New name" {
+		t.Errorf("Name = %q, want %q", got.Name, "New name")
+	}
+	if got.XtreamUser != "newuser" {
+		t.Errorf("XtreamUser = %q, want %q", got.XtreamUser, "newuser")
+	}
+	if got.XtreamPassword != "oldpass" {
+		t.Errorf("XtreamPassword = %q, want unchanged %q (blank password should keep it)", got.XtreamPassword, "oldpass")
+	}
+}
+
 func TestCredentials_AddAndDeleteProtected(t *testing.T) {
 	srv, ts := newTestAdminServer(t)
 	client, token := newLoggedInClient(t, ts.URL)
@@ -216,11 +255,11 @@ func TestUserForm_PicksSpecificCredentialUnderProvider(t *testing.T) {
 	if err := srv.Store.AddAddresses(xc.ID, "http://a.example.com"); err != nil {
 		t.Fatalf("AddAddresses() error: %v", err)
 	}
-	credA, err := srv.Store.CreateCredential(xc.ID, "userA", "passA")
+	credA, err := srv.Store.CreateCredential(xc.ID, "", "userA", "passA")
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
-	credB, err := srv.Store.CreateCredential(xc.ID, "userB", "passB")
+	credB, err := srv.Store.CreateCredential(xc.ID, "", "userB", "passB")
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}

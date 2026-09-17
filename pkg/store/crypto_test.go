@@ -47,7 +47,7 @@ func TestCredentialsEncryptedAtRestAndDecryptedOnRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	cred, err := s.CreateCredential(xc.ID, "secretuser", "secretpass")
+	cred, err := s.CreateCredential(xc.ID, "", "secretuser", "secretpass")
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestOpenRefusesMissingOrWrongKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	if _, err := s.CreateCredential(xc.ID, "u", "p"); err != nil {
+	if _, err := s.CreateCredential(xc.ID, "", "u", "p"); err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
 	s.Close() // nolint: errcheck
@@ -120,7 +120,7 @@ func TestEncryptExistingCredentialsMigratesInTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	credA, err := s.CreateCredential(xcA.ID, "userA", "passA")
+	credA, err := s.CreateCredential(xcA.ID, "", "userA", "passA")
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestEncryptExistingCredentialsMigratesInTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	credB, err := s.CreateCredential(xcB.ID, "userB", "passB")
+	credB, err := s.CreateCredential(xcB.ID, "", "userB", "passB")
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}

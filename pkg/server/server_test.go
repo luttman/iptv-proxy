@@ -81,7 +81,7 @@ func newXtreamCode(t *testing.T, s *store.Store, name, baseURL, user, pass strin
 	if err := s.AddAddresses(xc.ID, baseURL); err != nil {
 		t.Fatalf("AddAddresses() error: %v", err)
 	}
-	cred, err := s.CreateCredential(xc.ID, user, pass)
+	cred, err := s.CreateCredential(xc.ID, "", user, pass)
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}

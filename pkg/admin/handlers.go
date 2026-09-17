@@ -208,14 +208,15 @@ func (a *admin) xtreamCodeCreate(ctx *gin.Context) {
 		err = a.srv.Store.AddAddresses(xc.ID, ctx.PostForm("base_url"))
 	}
 	if err == nil {
-		_, err = a.srv.Store.CreateCredential(xc.ID, ctx.PostForm("xtream_user"), ctx.PostForm("xtream_password"))
+		_, err = a.srv.Store.CreateCredential(xc.ID, ctx.PostForm("credential_name"), ctx.PostForm("xtream_user"), ctx.PostForm("xtream_password"))
 	}
 	if err != nil {
 		ctx.Header("Content-Type", "text/html; charset=utf-8")
 		templates.ExecuteTemplate(ctx.Writer, "xtreamCodeNewForm", gin.H{ // nolint: errcheck
 			"Error": err.Error(), "CSRFToken": a.csrfToken(ctx),
 			"Name": ctx.PostForm("name"), "BaseURL": ctx.PostForm("base_url"),
-			"XtreamUser": ctx.PostForm("xtream_user"), "XtreamPassword": ctx.PostForm("xtream_password"),
+			"CredentialName": ctx.PostForm("credential_name"),
+			"XtreamUser":     ctx.PostForm("xtream_user"), "XtreamPassword": ctx.PostForm("xtream_password"),
 		})
 		return
 	}
@@ -354,12 +355,32 @@ func (a *admin) credentialCreate(ctx *gin.Context) {
 		return
 	}
 
-	if _, err := a.srv.Store.CreateCredential(id, ctx.PostForm("xtream_user"), ctx.PostForm("xtream_password")); err != nil {
+	if _, err := a.srv.Store.CreateCredential(id, ctx.PostForm("name"), ctx.PostForm("xtream_user"), ctx.PostForm("xtream_password")); err != nil {
 		ctx.String(http.StatusInternalServerError, "%s", err)
 		return
 	}
 
 	ctx.Redirect(http.StatusFound, "/admin/xtream-codes/"+ctx.Param("id")+"/edit")
+}
+
+func (a *admin) credentialUpdate(ctx *gin.Context) {
+	xcID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, "invalid id")
+		return
+	}
+	credID, err := strconv.ParseInt(ctx.Param("credId"), 10, 64)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, "invalid credential id")
+		return
+	}
+
+	if _, err := a.srv.Store.UpdateCredential(credID, ctx.PostForm("name"), ctx.PostForm("xtream_user"), ctx.PostForm("xtream_password")); err != nil {
+		ctx.String(http.StatusInternalServerError, "%s", err)
+		return
+	}
+
+	ctx.Redirect(http.StatusFound, fmt.Sprintf("/admin/xtream-codes/%d/edit", xcID))
 }
 
 func (a *admin) credentialDelete(ctx *gin.Context) {

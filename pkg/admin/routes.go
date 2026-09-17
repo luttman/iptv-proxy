@@ -73,6 +73,7 @@ func Register(srv *server.Config, creds Credentials) error {
 	authed.POST("/xtream-codes/:id/addresses/:addressId/toggle", a.csrfProtect, a.addressToggle)
 	authed.POST("/xtream-codes/:id/addresses/:addressId/delete", a.csrfProtect, a.addressDelete)
 	authed.POST("/xtream-codes/:id/credentials", a.csrfProtect, a.credentialCreate)
+	authed.POST("/xtream-codes/:id/credentials/:credId/edit", a.csrfProtect, a.credentialUpdate)
 	authed.POST("/xtream-codes/:id/credentials/:credId/delete", a.csrfProtect, a.credentialDelete)
 	authed.GET("/users/new", a.userNewForm)
 	authed.POST("/users/new", a.csrfProtect, a.userCreate)

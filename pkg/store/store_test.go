@@ -50,7 +50,7 @@ func newXtreamCode(t *testing.T, s *Store, name, baseURL, user, pass string) (Xt
 	if err := s.AddAddresses(xc.ID, baseURL); err != nil {
 		t.Fatalf("AddAddresses() error: %v", err)
 	}
-	cred, err := s.CreateCredential(xc.ID, user, pass)
+	cred, err := s.CreateCredential(xc.ID, "", user, pass)
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestCredentialCRUDAndInUse(t *testing.T) {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
 
-	cred, err := s.CreateCredential(xc.ID, "user1", "pass1")
+	cred, err := s.CreateCredential(xc.ID, "", "user1", "pass1")
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestCredentialCRUDAndInUse(t *testing.T) {
 		t.Errorf("GetCredential() = %+v, err %v, want user1/pass1", got, err)
 	}
 
-	if _, err := s.CreateCredential(xc.ID, "user2", "pass2"); err != nil {
+	if _, err := s.CreateCredential(xc.ID, "", "user2", "pass2"); err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
 	list, err := s.ListCredentials(xc.ID)
@@ -200,6 +200,53 @@ func TestCredentialCRUDAndInUse(t *testing.T) {
 	}
 	if err := s.DeleteCredential(cred.ID); !errors.Is(err, ErrCredentialInUse) {
 		t.Errorf("DeleteCredential() err = %v, want ErrCredentialInUse", err)
+	}
+}
+
+func TestCredentialLabelFallsBackToUsername(t *testing.T) {
+	unnamed := XtreamCredential{XtreamUser: "rawuser"}
+	if got := unnamed.Label(); got != "rawuser" {
+		t.Errorf("Label() = %q, want %q (fallback to username)", got, "rawuser")
+	}
+
+	named := XtreamCredential{Name: "Mom's account", XtreamUser: "rawuser"}
+	if got := named.Label(); got != "Mom's account" {
+		t.Errorf("Label() = %q, want %q", got, "Mom's account")
+	}
+}
+
+func TestUpdateCredentialRenamesAndKeepsPasswordWhenBlank(t *testing.T) {
+	s := newTestStore(t)
+
+	xc, err := s.CreateXtreamCode("provider-a")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	cred, err := s.CreateCredential(xc.ID, "Original name", "user1", "pass1")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+
+	updated, err := s.UpdateCredential(cred.ID, "New name", "user1renamed", "")
+	if err != nil {
+		t.Fatalf("UpdateCredential() error: %v", err)
+	}
+	if updated.Name != "New name" {
+		t.Errorf("UpdateCredential() Name = %q, want %q", updated.Name, "New name")
+	}
+	if updated.XtreamUser != "user1renamed" {
+		t.Errorf("UpdateCredential() XtreamUser = %q, want %q", updated.XtreamUser, "user1renamed")
+	}
+	if updated.XtreamPassword != "pass1" {
+		t.Errorf("UpdateCredential() with blank password = %q, want unchanged %q", updated.XtreamPassword, "pass1")
+	}
+
+	changedPass, err := s.UpdateCredential(cred.ID, "New name", "user1renamed", "newpass")
+	if err != nil {
+		t.Fatalf("UpdateCredential() error: %v", err)
+	}
+	if changedPass.XtreamPassword != "newpass" {
+		t.Errorf("UpdateCredential() XtreamPassword = %q, want %q", changedPass.XtreamPassword, "newpass")
 	}
 }
 
@@ -285,11 +332,11 @@ func TestUsersCanShareOneCredentialOrHaveTheirOwn(t *testing.T) {
 	if err := s.AddAddresses(xc.ID, "http://a.example.com"); err != nil {
 		t.Fatalf("AddAddresses() error: %v", err)
 	}
-	credA, err := s.CreateCredential(xc.ID, "userA", "passA")
+	credA, err := s.CreateCredential(xc.ID, "", "userA", "passA")
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
-	credB, err := s.CreateCredential(xc.ID, "userB", "passB")
+	credB, err := s.CreateCredential(xc.ID, "", "userB", "passB")
 	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}

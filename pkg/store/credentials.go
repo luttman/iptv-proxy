@@ -29,8 +29,8 @@ import (
 var ErrCredentialInUse = errors.New("credential is still assigned to one or more users")
 
 // CreateCredential adds a new username/password pair under a
-// provider.
-func (s *Store) CreateCredential(xtreamCodeID int64, username, password string) (XtreamCredential, error) {
+// provider. name is an optional human-friendly label.
+func (s *Store) CreateCredential(xtreamCodeID int64, name, username, password string) (XtreamCredential, error) {
 	encUser, err := encryptValue(s.key, username)
 	if err != nil {
 		return XtreamCredential{}, fmt.Errorf("create credential: %w", err)
@@ -41,8 +41,8 @@ func (s *Store) CreateCredential(xtreamCodeID int64, username, password string) 
 	}
 
 	res, err := s.db.Exec(
-		`INSERT INTO xtream_credentials (xtream_code_id, xtream_user, xtream_password) VALUES (?, ?, ?)`,
-		xtreamCodeID, encUser, encPass,
+		`INSERT INTO xtream_credentials (xtream_code_id, name, xtream_user, xtream_password) VALUES (?, ?, ?, ?)`,
+		xtreamCodeID, name, encUser, encPass,
 	)
 	if err != nil {
 		return XtreamCredential{}, fmt.Errorf("create credential: %w", err)
@@ -56,8 +56,18 @@ func (s *Store) CreateCredential(xtreamCodeID int64, username, password string) 
 	return s.GetCredential(id)
 }
 
-// UpdateCredential changes a credential's username/password.
-func (s *Store) UpdateCredential(id int64, username, password string) (XtreamCredential, error) {
+// UpdateCredential changes a credential's name/username/password. An
+// empty password leaves the existing one unchanged (so editing a
+// credential doesn't require re-typing a secret you're not changing).
+func (s *Store) UpdateCredential(id int64, name, username, password string) (XtreamCredential, error) {
+	if password == "" {
+		existing, err := s.GetCredential(id)
+		if err != nil {
+			return XtreamCredential{}, fmt.Errorf("update credential: %w", err)
+		}
+		password = existing.XtreamPassword
+	}
+
 	encUser, err := encryptValue(s.key, username)
 	if err != nil {
 		return XtreamCredential{}, fmt.Errorf("update credential: %w", err)
@@ -67,7 +77,7 @@ func (s *Store) UpdateCredential(id int64, username, password string) (XtreamCre
 		return XtreamCredential{}, fmt.Errorf("update credential: %w", err)
 	}
 
-	if _, err := s.db.Exec(`UPDATE xtream_credentials SET xtream_user = ?, xtream_password = ? WHERE id = ?`, encUser, encPass, id); err != nil {
+	if _, err := s.db.Exec(`UPDATE xtream_credentials SET name = ?, xtream_user = ?, xtream_password = ? WHERE id = ?`, name, encUser, encPass, id); err != nil {
 		return XtreamCredential{}, fmt.Errorf("update credential: %w", err)
 	}
 
@@ -94,7 +104,7 @@ func (s *Store) DeleteCredential(id int64) error {
 
 // GetCredential looks up a credential by id.
 func (s *Store) GetCredential(id int64) (XtreamCredential, error) {
-	row := s.db.QueryRow(`SELECT id, xtream_code_id, xtream_user, xtream_password, created_at FROM xtream_credentials WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, xtream_code_id, name, xtream_user, xtream_password, created_at FROM xtream_credentials WHERE id = ?`, id)
 	return s.scanCredential(row)
 }
 
@@ -102,7 +112,7 @@ func (s *Store) GetCredential(id int64) (XtreamCredential, error) {
 // first.
 func (s *Store) ListCredentials(xtreamCodeID int64) ([]XtreamCredential, error) {
 	rows, err := s.db.Query(
-		`SELECT id, xtream_code_id, xtream_user, xtream_password, created_at FROM xtream_credentials WHERE xtream_code_id = ? ORDER BY id`,
+		`SELECT id, xtream_code_id, name, xtream_user, xtream_password, created_at FROM xtream_credentials WHERE xtream_code_id = ? ORDER BY id`,
 		xtreamCodeID,
 	)
 	if err != nil {
@@ -124,7 +134,7 @@ func (s *Store) ListCredentials(xtreamCodeID int64) ([]XtreamCredential, error) 
 
 func (s *Store) scanCredential(row rowScanner) (XtreamCredential, error) {
 	var c XtreamCredential
-	err := row.Scan(&c.ID, &c.XtreamCodeID, &c.XtreamUser, &c.XtreamPassword, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.XtreamCodeID, &c.Name, &c.XtreamUser, &c.XtreamPassword, &c.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return XtreamCredential{}, ErrNotFound
 	}

@@ -153,6 +153,14 @@ CREATE INDEX IF NOT EXISTS idx_bandwidth_samples_time ON bandwidth_samples(sampl
 		}
 	}
 
+	// Optional human-friendly label for a credential, shown instead of
+	// the raw xtream username where there's room to.
+	if _, err := s.db.Exec(`ALTER TABLE xtream_credentials ADD COLUMN name TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("migrate schema (add credential name): %w", err)
+		}
+	}
+
 	return nil
 }
 
