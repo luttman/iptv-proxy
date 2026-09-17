@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,6 +11,35 @@ import (
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/server"
 )
+
+func TestProxyTestExpiredSessionReturnsJSON(t *testing.T) {
+	_, ts := newTestAdminServer(t)
+	for _, cookie := range []string{"", "expired-session"} {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/admin/settings/proxy/test", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Accept", "application/json")
+		if cookie != "" {
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: cookie})
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result struct {
+			Message string `json:"message"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close() // nolint: errcheck
+		if resp.StatusCode != http.StatusUnauthorized || err != nil || !strings.Contains(result.Message, "Session expired") {
+			t.Fatalf("unauthenticated test: status=%d message=%q err=%v", resp.StatusCode, result.Message, err)
+		}
+		if resp.Request.URL.Path != "/admin/settings/proxy/test" {
+			t.Fatal("API request redirected to HTML login page")
+		}
+	}
+}
 
 func TestProxySettingsSaveAndAccess(t *testing.T) {
 	srv, ts := newTestAdminServer(t)

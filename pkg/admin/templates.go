@@ -204,6 +204,7 @@ const styleBlock = `<meta name="viewport" content="width=device-width, initial-s
   .btn-danger { background: var(--danger); }
   .btn-danger:hover { background: var(--danger-dark); }
   .btn-link {
+    background: transparent; cursor: pointer; font-family: inherit;
     display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem;
     padding: 0.3rem 0.7rem; font-size: 0.8rem; font-weight: 600;
     color: var(--accent); text-decoration: none; border: 1px solid var(--border); border-radius: 6px;
@@ -278,9 +279,16 @@ function bindAjaxForms() {
       btn.disabled = true;
       result.textContent = 'Testing proxy…';
       try {
-        var response = await fetch('/admin/settings/proxy/test', { method: 'POST', body: new FormData(form), credentials: 'same-origin' });
-        if (response.status === 403) throw new Error('Session expired. Reload the dashboard and sign in again.');
-        var data = await response.json();
+        var response = await fetch('/admin/settings/proxy/test', { method: 'POST', body: new FormData(form), credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        if (response.status === 401 || response.status === 403 || (response.redirected && new URL(response.url).pathname === '/admin/login')) {
+          throw new Error('Session expired. Reload the dashboard and sign in again.');
+        }
+        if (!(response.headers.get('Content-Type') || '').includes('application/json')) {
+          throw new Error('Proxy test received an unexpected response (HTTP ' + response.status + '). Reload the dashboard; if it persists, check the server or reverse proxy logs.');
+        }
+        var data;
+        try { data = await response.json(); }
+        catch (_) { throw new Error('Proxy test received an invalid response. Check the server or reverse proxy logs.'); }
         result.textContent = data.message || 'Proxy test failed.';
       } catch (err) {
         result.textContent = err.message || 'Could not test the proxy.';

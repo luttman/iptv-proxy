@@ -104,6 +104,10 @@ func (a *admin) clearSession(ctx *gin.Context) {
 func (a *admin) requireSession(ctx *gin.Context) {
 	cookie, err := ctx.Cookie(sessionCookieName)
 	if err != nil || !a.signer.verify(cookie) {
+		if strings.Contains(ctx.GetHeader("Accept"), "application/json") {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"message": "Session expired. Reload the dashboard and sign in again."})
+			return
+		}
 		ctx.Redirect(http.StatusFound, "/admin/login")
 		ctx.Abort()
 		return
