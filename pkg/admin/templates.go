@@ -803,11 +803,19 @@ const manageFragmentPage = `
     data-action="/admin/xtream-codes/{{.ID}}/credentials" data-title="Add credential to {{.Name}}">+ Add credential</button>
 </div>
 <div class="table-scroll"><table>
-  <tr><th>Name</th><th>Username</th><th></th></tr>
+  <tr><th>Name</th><th>Username</th><th>Expires</th><th></th></tr>
   {{range .Credentials}}
+  {{$ce := index $.CredentialExpiries .ID}}
   <tr>
     <td>{{if .Name}}{{.Name}}{{else}}&mdash;{{end}}</td>
     <td class="mono">{{.XtreamUser}}</td>
+    <td class="{{if and $ce.HasExpiry (le $ce.DaysLeft 0)}}status-down{{end}}">
+      {{if eq $ce.CheckedAtUnix 0}}unknown
+      {{else if not $ce.HasExpiry}}unlimited
+      {{else if le $ce.DaysLeft 0}}expired
+      {{else}}{{$ce.DaysLeft}}d left
+      {{end}}
+    </td>
     <td class="actions">
       <button type="button" class="btn-link btn-sm"
         data-open-dialog="editCredentialDialog" data-fill-form="editCredentialForm"
@@ -820,7 +828,7 @@ const manageFragmentPage = `
     </td>
   </tr>
   {{else}}
-  <tr class="empty-row"><td colspan="3">No credentials yet</td></tr>
+  <tr class="empty-row"><td colspan="4">No credentials yet</td></tr>
   {{end}}
 </table></div>
 

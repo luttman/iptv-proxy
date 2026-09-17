@@ -69,10 +69,9 @@ func (c *Config) checkSubscriptions(ctx context.Context) {
 	}
 
 	for _, backend := range backends {
-		// A provider can have several credentials; any one of them
-		// reports the same account status the provider considers
-		// "the subscription", so the oldest (first-added) credential is
-		// used as the representative one to check.
+		// Each credential is its own account on the provider's panel and
+		// can carry its own expiry, so every credential is checked and
+		// tracked separately rather than assuming one represents them all.
 		credentials, err := c.Store.ListCredentials(backend.ID)
 		if err != nil || len(credentials) == 0 {
 			continue
@@ -84,31 +83,33 @@ func (c *Config) checkSubscriptions(ctx context.Context) {
 			continue
 		}
 
-		unresolved := store.ResolvedBackend{
-			ID:             backend.ID,
-			Name:           backend.Name,
-			BaseURL:        addresses,
-			XtreamUser:     credentials[0].XtreamUser,
-			XtreamPassword: credentials[0].XtreamPassword,
-		}
+		for _, cred := range credentials {
+			unresolved := store.ResolvedBackend{
+				ID:             backend.ID,
+				Name:           backend.Name,
+				BaseURL:        addresses,
+				XtreamUser:     cred.XtreamUser,
+				XtreamPassword: cred.XtreamPassword,
+			}
 
-		// Addresses may still hold several failover candidates; narrow
-		// to the one failover would actually use before logging in.
-		resolved, err := c.selectUpstream(ctx, unresolved, "")
-		if err != nil {
-			slog.Warn("subscription check failed", "backend", backend.Name, "error", err)
-			continue
-		}
+			// Addresses may still hold several failover candidates; narrow
+			// to the one failover would actually use before logging in.
+			resolved, err := c.selectUpstream(ctx, unresolved, "")
+			if err != nil {
+				slog.Warn("subscription check failed", "backend", backend.Name, "credential", cred.ID, "error", err)
+				continue
+			}
 
-		expiry, err := fetchSubscriptionExpiry(ctx, resolved)
-		if err != nil {
-			slog.Warn("subscription check failed", "backend", backend.Name, "error", err)
-			continue
-		}
+			expiry, err := fetchSubscriptionExpiry(ctx, resolved)
+			if err != nil {
+				slog.Warn("subscription check failed", "backend", backend.Name, "credential", cred.ID, "error", err)
+				continue
+			}
 
-		c.subscriptionExpiryLock.Lock()
-		c.subscriptionExpiry[backend.ID] = expiry
-		c.subscriptionExpiryLock.Unlock()
+			c.subscriptionExpiryLock.Lock()
+			c.subscriptionExpiry[cred.ID] = expiry
+			c.subscriptionExpiryLock.Unlock()
+		}
 	}
 }
 
@@ -132,8 +133,8 @@ func fetchSubscriptionExpiry(ctx context.Context, backend store.ResolvedBackend)
 }
 
 // SubscriptionExpiries returns a snapshot of the latest known
-// subscription status per xtream-code backend, keyed by backend ID.
-// A backend not yet present (CheckedAtUnix == 0) hasn't been checked yet.
+// subscription status per credential, keyed by credential ID. A
+// credential not yet present (CheckedAtUnix == 0) hasn't been checked yet.
 func (c *Config) SubscriptionExpiries() map[int64]SubscriptionExpiry {
 	c.subscriptionExpiryLock.RLock()
 	defer c.subscriptionExpiryLock.RUnlock()

@@ -111,15 +111,16 @@ func TestCheckSubscriptionsNarrowsMultiAddressBackend(t *testing.T) {
 	if err := c.Store.AddAddresses(xc.ID, upstream.URL+"\r\nhttp://unreachable.invalid"); err != nil {
 		t.Fatalf("AddAddresses() error: %v", err)
 	}
-	if _, err := c.Store.CreateCredential(xc.ID, "", "u", "p"); err != nil {
+	cred, err := c.Store.CreateCredential(xc.ID, "", "u", "p")
+	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
 
 	c.checkSubscriptions(context.Background())
 
-	got, ok := c.SubscriptionExpiries()[xc.ID]
+	got, ok := c.SubscriptionExpiries()[cred.ID]
 	if !ok || !got.HasExpiry {
-		t.Errorf("SubscriptionExpiries()[%d] = %+v, ok=%v, want a resolved expiry", xc.ID, got, ok)
+		t.Errorf("SubscriptionExpiries()[%d] = %+v, ok=%v, want a resolved expiry", cred.ID, got, ok)
 	}
 }
 
@@ -137,18 +138,55 @@ func TestCheckSubscriptionsPopulatesSnapshot(t *testing.T) {
 	if err := c.Store.AddAddresses(xc.ID, upstream.URL); err != nil {
 		t.Fatalf("AddAddresses() error: %v", err)
 	}
-	if _, err := c.Store.CreateCredential(xc.ID, "", "u", "p"); err != nil {
+	cred, err := c.Store.CreateCredential(xc.ID, "", "u", "p")
+	if err != nil {
 		t.Fatalf("CreateCredential() error: %v", err)
 	}
 
 	c.checkSubscriptions(context.Background())
 
 	snap := c.SubscriptionExpiries()
-	got, ok := snap[xc.ID]
+	got, ok := snap[cred.ID]
 	if !ok {
-		t.Fatal("SubscriptionExpiries() missing entry for backend")
+		t.Fatal("SubscriptionExpiries() missing entry for credential")
 	}
 	if !got.HasExpiry {
 		t.Errorf("HasExpiry = false, want true")
+	}
+}
+
+func TestCheckSubscriptionsTracksEachCredentialSeparately(t *testing.T) {
+	soon := xtreamLoginServer(t, fmt.Sprintf("%d", time.Now().Add(24*time.Hour).Unix()))
+	defer soon.Close()
+
+	c := newTestConfig(t)
+	c.subscriptionExpiry = map[int64]SubscriptionExpiry{}
+
+	xc, err := c.Store.CreateXtreamCode("provider-a")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	// Both credentials share the same address list; each one's own
+	// login response determines its own expiry.
+	if err := c.Store.AddAddresses(xc.ID, soon.URL); err != nil {
+		t.Fatalf("AddAddresses() error: %v", err)
+	}
+	credA, err := c.Store.CreateCredential(xc.ID, "A", "u", "p")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+	credB, err := c.Store.CreateCredential(xc.ID, "B", "u", "p")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+
+	c.checkSubscriptions(context.Background())
+
+	snap := c.SubscriptionExpiries()
+	if _, ok := snap[credA.ID]; !ok {
+		t.Errorf("SubscriptionExpiries() missing entry for credential A (%d)", credA.ID)
+	}
+	if _, ok := snap[credB.ID]; !ok {
+		t.Errorf("SubscriptionExpiries() missing entry for credential B (%d)", credB.ID)
 	}
 }

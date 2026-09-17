@@ -195,6 +195,12 @@ func (a *admin) dashboard(ctx *gin.Context) {
 		}
 	}
 
+	credExpiries := a.srv.SubscriptionExpiries()
+	codeExpiries := map[int64]server.SubscriptionExpiry{}
+	for _, c := range codes {
+		codeExpiries[c.ID] = worstCredentialExpiry(c.Credentials, credExpiries)
+	}
+
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	templates.ExecuteTemplate(ctx.Writer, "dashboard", gin.H{ // nolint: errcheck
 		"XtreamCodes":          codes,
@@ -203,10 +209,31 @@ func (a *admin) dashboard(ctx *gin.Context) {
 		"Users":                rows,
 		"BackendHealth":        health,
 		"OnlineBackends":       online,
-		"SubscriptionExpiries": a.srv.SubscriptionExpiries(),
+		"SubscriptionExpiries": codeExpiries,
 		"Bandwidth":            formatBandwidth(a.srv.BandwidthStats()),
 		"CSRFToken":            a.csrfToken(ctx),
 	})
+}
+
+// worstCredentialExpiry picks the single expiry status to show for a
+// provider's dashboard card out of all its credentials' independently
+// checked statuses: the soonest-expiring one, since that's the one an
+// operator needs to act on. Unlimited credentials only surface if none
+// of the others are expiring, and an unchecked credential is ignored
+// rather than making the whole card look unknown.
+func worstCredentialExpiry(credentials []store.XtreamCredential, byCredential map[int64]server.SubscriptionExpiry) server.SubscriptionExpiry {
+	var worst server.SubscriptionExpiry
+	have := false
+	for _, cred := range credentials {
+		e, ok := byCredential[cred.ID]
+		if !ok || e.CheckedAtUnix == 0 {
+			continue
+		}
+		if !have || (e.HasExpiry && (!worst.HasExpiry || e.DaysLeft < worst.DaysLeft)) {
+			worst, have = e, true
+		}
+	}
+	return worst
 }
 
 // xtreamCodeCreate creates a provider from the "bulk add" dialog: a
@@ -261,11 +288,12 @@ func (a *admin) xtreamCodeManageFragment(ctx *gin.Context) {
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
 	templates.ExecuteTemplate(ctx.Writer, "manageFragment", gin.H{ // nolint: errcheck
-		"ID":          xc.ID,
-		"Name":        xc.Name,
-		"Addresses":   addresses,
-		"Credentials": credentials,
-		"CSRFToken":   a.csrfToken(ctx),
+		"ID":                 xc.ID,
+		"Name":               xc.Name,
+		"Addresses":          addresses,
+		"Credentials":        credentials,
+		"CredentialExpiries": a.srv.SubscriptionExpiries(),
+		"CSRFToken":          a.csrfToken(ctx),
 	})
 }
 
