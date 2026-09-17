@@ -54,7 +54,7 @@ func (c *Config) cacheXtreamM3u(playlist *m3u.Playlist, cacheName string, ru res
 }
 
 func (c *Config) xtreamGenerateM3u(ctx *gin.Context, extension string, ru resolvedUser) (*m3u.Playlist, error) {
-	client, err := xtreamapi.New(ctx.Request.Context(), ru.Backend.XtreamUser, ru.Backend.XtreamPassword, ru.Backend.BaseURL, ctx.Request.UserAgent())
+	client, err := xtreamapi.NewWithHTTP(ctx.Request.Context(), ru.Backend.XtreamUser, ru.Backend.XtreamPassword, ru.Backend.BaseURL, ctx.Request.UserAgent(), c.httpClient)
 	if err != nil {
 		return nil, err
 	}

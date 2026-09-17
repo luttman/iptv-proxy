@@ -107,11 +107,21 @@ type Config struct {
 	// ResponseHeaderTimeout) without capping how long an established
 	// stream may run — a stream's *body* read has no deadline here, so
 	// long-running video doesn't get cut off by these timeouts.
-	httpClient *http.Client
+	httpClient    *http.Client
+	outboundProxy *outboundProxy
 }
 
 // NewServer initializes a new server configuration backed by st.
 func NewServer(conf *config.ProxyConfig, st *store.Store) (*Config, error) {
+	settings, err := st.ProxySettings()
+	if err != nil {
+		return nil, fmt.Errorf("load outbound proxy settings: %w", err)
+	}
+	if settings.URL != "" {
+		if _, err := validateProxyURL(settings.URL); err != nil {
+			return nil, err
+		}
+	}
 	c := &Config{
 		ProxyConfig:            conf,
 		Store:                  st,
@@ -123,6 +133,8 @@ func NewServer(conf *config.ProxyConfig, st *store.Store) (*Config, error) {
 		subscriptionExpiry:     map[int64]SubscriptionExpiry{},
 		httpClient:             newUpstreamHTTPClient(),
 	}
+	c.outboundProxy = &outboundProxy{settings: settings}
+	c.httpClient.Transport.(*http.Transport).Proxy = c.outboundProxy.proxy
 
 	router := gin.Default()
 	router.Use(cors.Default())

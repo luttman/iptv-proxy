@@ -77,6 +77,11 @@ func (s *Store) Close() error {
 
 func (s *Store) migrate() error {
 	const schema = `
+CREATE TABLE IF NOT EXISTS settings (
+	name TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS xtream_codes (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL UNIQUE,

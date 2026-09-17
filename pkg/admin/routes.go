@@ -64,6 +64,8 @@ func Register(srv *server.Config, creds Credentials) error {
 	authed.POST("/logout", a.csrfProtect, a.logout)
 	authed.GET("", a.dashboard)
 	authed.GET("/health.json", a.healthJSON)
+	authed.GET("/settings/proxy", a.proxyPage)
+	authed.POST("/settings/proxy", a.csrfProtect, a.proxyUpdate)
 	authed.POST("/xtream-codes/new", a.csrfProtect, a.xtreamCodeCreate)
 	authed.GET("/xtream-codes/:id/manage", a.xtreamCodeManageFragment)
 	authed.POST("/xtream-codes/:id/edit", a.csrfProtect, a.xtreamCodeUpdate)

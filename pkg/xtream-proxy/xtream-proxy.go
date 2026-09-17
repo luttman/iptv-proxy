@@ -20,10 +20,12 @@ package xtreamproxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
 	xtream "github.com/tellytv/go.xtream-codes"
@@ -55,6 +57,69 @@ func New(ctx context.Context, user, password, baseURL, userAgent string) (*Clien
 	}
 
 	return &Client{cli}, nil
+}
+
+// NewWithHTTP injects the server's client before the initial login. The
+// upstream constructor logs in using http.DefaultClient before accepting context.
+func NewWithHTTP(ctx context.Context, user, password, baseURL, userAgent string, httpClient *http.Client) (*Client, error) {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	c := &Client{&xtream.XtreamClient{
+		Username: user, Password: password, BaseURL: strings.TrimRight(baseURL, "/"),
+		UserAgent: userAgent, Context: ctx, HTTP: httpClient,
+	}}
+	var auth xtream.AuthenticationResponse
+	if err := c.requestJSON("", nil, &auth); err != nil {
+		return nil, err
+	}
+	c.UserInfo, c.ServerInfo = auth.UserInfo, auth.ServerInfo
+	return c, nil
+}
+
+func (c *Client) requestJSON(action string, params url.Values, result interface{}) error {
+	u, err := url.Parse(c.BaseURL + "/player_api.php")
+	if err != nil {
+		return fmt.Errorf("invalid provider URL")
+	}
+	q := u.Query()
+	q.Set("username", c.Username)
+	q.Set("password", c.Password)
+	if action != "" {
+		q.Set("action", action)
+	}
+	for key, values := range params {
+		q[key] = values
+	}
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(c.Context, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", c.UserAgent)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() // nolint: errcheck
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(result)
+}
+
+// The upstream stream methods write to a private cache initialized only by
+// its default-client constructor. This app only needs the returned stream list.
+func (c *Client) GetLiveStreams(categoryID string) ([]xtream.Stream, error) {
+	var streams []xtream.Stream
+	err := c.requestJSON(getLiveStreams, url.Values{"category_id": {categoryID}}, &streams)
+	return streams, err
+}
+
+func (c *Client) GetVideoOnDemandStreams(categoryID string) ([]xtream.Stream, error) {
+	var streams []xtream.Stream
+	err := c.requestJSON(getVodStreams, url.Values{"category_id": {categoryID}}, &streams)
+	return streams, err
 }
 
 type login struct {

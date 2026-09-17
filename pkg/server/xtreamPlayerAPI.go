@@ -61,7 +61,7 @@ func (c *Config) xtreamPlayerAPI(ctx *gin.Context, q url.Values) {
 		action = q["action"][0]
 	}
 
-	client, err := xtreamapi.New(ctx.Request.Context(), ru.Backend.XtreamUser, ru.Backend.XtreamPassword, ru.Backend.BaseURL, ctx.Request.UserAgent())
+	client, err := xtreamapi.NewWithHTTP(ctx.Request.Context(), ru.Backend.XtreamUser, ru.Backend.XtreamPassword, ru.Backend.BaseURL, ctx.Request.UserAgent(), c.httpClient)
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return
@@ -107,7 +107,7 @@ func (c *Config) xtreamXMLTV(ctx *gin.Context) {
 	}
 	req.Header.Set("User-Agent", ctx.Request.UserAgent())
 
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err) // nolint: errcheck
 		return

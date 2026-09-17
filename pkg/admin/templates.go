@@ -417,6 +417,7 @@ const dashboardPage = styleBlock + themeToggle + `
   <header class="topbar">
     <h1><span class="brand-dot" aria-hidden="true"></span>iptv-proxy</h1>
     <nav>
+      <a href="/admin/settings/proxy">Proxy settings</a>
       <form class="inline" method="post" action="/admin/logout">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <button type="submit" class="btn-link" style="background:none;border:none;cursor:pointer;">Log out</button>
@@ -839,8 +840,40 @@ const manageFragmentPage = `
 
 var templates = template.Must(template.New("root").Parse(""))
 
+const proxyPage = styleBlock + themeToggle + `
+<div class="wrap">
+  <header class="topbar"><h1>Outbound proxy</h1><nav><a href="/admin">Dashboard</a></nav></header>
+  <section class="panel" style="max-width:42rem;margin-inline:auto">
+    <div class="panel-header"><h2>Proxy settings</h2><span class="badge">{{if .Settings.Enabled}}Enabled{{else}}Disabled{{end}}</span></div>
+    <p class="mono">Applies to new playback and API requests for all providers. Active streams keep their connection.</p>
+    {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+    {{if .Saved}}<p role="status">Proxy settings saved.</p>{{end}}
+    <form method="post" action="/admin/settings/proxy">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="proxy-source">Proxy source</label>
+      <select id="proxy-source" name="source">
+        <option value="environment" {{if .Settings.UseEnvironment}}selected{{end}}>Environment variables</option>
+        <option value="custom" {{if not .Settings.UseEnvironment}}selected{{end}}>Custom proxy</option>
+      </select>
+      <label for="proxy-url">Custom proxy URL</label>
+      <input id="proxy-url" name="proxy_url" type="password" autocomplete="new-password" placeholder="http://host:3128 or socks5://host:1080" aria-describedby="proxy-url-help">
+      <p id="proxy-url-help" class="mono">Saved proxy: {{.CustomProxy}}. Leave blank to keep it. Authentication is supported with username:password@host; saved credentials are hidden.</p>
+      <label for="proxy-enabled"><input id="proxy-enabled" name="enabled" type="checkbox" style="width:auto" {{if .Settings.Enabled}}checked{{end}}> Enable outbound proxy</label>
+      <p class="mono">When disabled, new requests connect directly, even if environment variables configure a proxy.</p>
+      <button type="submit" class="btn">Save settings</button>
+    </form>
+  </section>
+  <section class="panel" style="max-width:42rem;margin-inline:auto">
+    <div class="panel-header"><h2>Environment configuration</h2></div>
+    <dl><dt>HTTP providers</dt><dd class="mono urls">{{.HTTPProxy}}</dd><dt>HTTPS providers</dt><dd class="mono urls">{{.HTTPSProxy}}</dd><dt>Bypass hosts (NO_PROXY)</dt><dd class="mono urls">{{if .NoProxy}}{{.NoProxy}}{{else}}None configured{{end}}</dd></dl>
+    <p class="mono">Environment mode respects NO_PROXY and bypasses localhost. Custom mode uses the entered proxy for every provider. Restart after changing environment variables.</p>
+    <p class="mono">Health checks and address selection still connect directly. If a provider is reachable only through the proxy, enable just one address for it.</p>
+  </section>
+</div>`
+
 func init() {
 	template.Must(templates.New("login").Parse(loginPage))
 	template.Must(templates.New("dashboard").Parse(dashboardPage))
 	template.Must(templates.New("manageFragment").Parse(manageFragmentPage))
+	template.Must(templates.New("proxy").Parse(proxyPage))
 }

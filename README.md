@@ -2,76 +2,32 @@
 
 [![Actions Status](https://github.com/luttman/iptv-proxy/workflows/CI/badge.svg)](https://github.com/luttman/iptv-proxy/actions?query=workflow%3ACI)
 
-A reverse proxy for Xtream-codes IPTV services. It sits between your
-IPTV players and one or more upstream Xtream-codes providers, hiding
-the real upstream credentials behind proxy logins you create and
-manage yourself.
+A reverse proxy for Xtream-codes IPTV services. Create proxy logins for
+players while keeping upstream credentials on the server.
 
-It is multi-tenant: any number of proxy users can be created, each
-assigned to exactly one upstream backend, managed through a built-in
-web admin UI. Two users assigned to two different backends are fully
-isolated from each other — neither ever sees the other's upstream
-credentials.
+- Manage providers, addresses, credentials, and users through `/admin`.
+- Assign each user to an upstream account and set concurrent-stream limits.
+- Proxy live TV, VOD, series, playlists, and EPG.
+- Monitor active streams, bandwidth, provider health, and subscription expiry.
+- Store configuration in SQLite, with optional encryption of upstream credentials.
 
 ## Dashboard
 
-Everything after login is one page: stat tiles, upstream health, the
-providers (xtream codes) you've configured, and the proxy users assigned
-to them. It's all AJAX and popups — adding an address or editing a
-credential doesn't reload anything.
-
 ![Dashboard overview](docs/dashboard.png)
 
-Each address is checked every 5 minutes, and the last 60 checks are kept
-so the 24h/7d columns mean something instead of just "up right now."
-Recent history is a real sparkline of those checks. Clicking Manage on a
-provider fetches its addresses and credentials on demand rather than
-rendering all of that into every page load — matters once you've got a
-dozen-plus providers instead of one or two.
+Use **Manage** to edit a provider's addresses and credentials.
 
 ![Manage popup](docs/manage-popup.png)
 
 ## About this fork
 
-This is a fork of [pierre-emmanuelJ/iptv-proxy](https://github.com/pierre-emmanuelJ/iptv-proxy),
-which is a single-user, single-backend proxy configured entirely
-through CLI flags. This fork rebuilds that into a multi-user,
-multi-backend service with persistent storage and an admin UI on top
-of the original project's Xtream-codes proxying logic. The notable
-differences from upstream:
-
-- **Multi-user, multi-backend.** Users and upstream Xtream-code
-  backends are stored in SQLite and managed at runtime through
-  `/admin`, instead of one hardcoded user/backend pair set at
-  startup via flags.
-- **Admin web UI.** Server-rendered pages for creating, editing, and
-  deleting users and backends, with a live view of currently active
-  streams (per-user, per-backend, with duration) and the ability to
-  forcibly stop a stuck or stale stream.
-- **Per-user concurrent stream limits.** Each user can be capped to
-  N simultaneous streams; exceeding it evicts that user's oldest
-  stream automatically.
-- **Security hardening.** CSRF protection on all admin mutations,
-  per-IP rate limiting on both admin and proxy login attempts,
-  bcrypt-hashed passwords, `SameSite`/`Secure` session cookies.
-- **Operational hardening.** Graceful shutdown on `SIGTERM`/`SIGINT`,
-  connection-pooled outbound HTTP client, request-scoped timeouts
-  that don't cap long-running streams, structured logging.
-- **Modernized toolchain.** Updated to current Go, refreshed
-  dependencies, vendoring intact, unit and integration test coverage
-  for the proxy, store, and admin packages (previously none).
-- **Removed:** the plain M3U-passthrough mode from upstream. It
-  doesn't fit a model where a user is assigned to one of several
-  Xtream backends, and supporting both would mean two parallel auth
-  paths. If you need that mode, use the upstream project instead.
-
-The underlying Xtream-codes request/response handling (live, VOD,
-series, EPG, HLS) is inherited from upstream and is otherwise
-unchanged.
+Based on [pierre-emmanuelJ/iptv-proxy](https://github.com/pierre-emmanuelJ/iptv-proxy),
+with multiple users and providers, persistent storage, and a web admin UI.
+The original plain M3U-passthrough mode is not supported.
 
 ## Quick start
 
-```Bash
+```sh
 iptv-proxy --port 8080 \
            --hostname proxyexample.com \
            --admin-user admin \
@@ -85,15 +41,16 @@ credentials above, and:
 1. Add an **xtream code** (a name, one or more upstream base URLs, and the
    upstream Xtream username/password).
 2. Add a **user** (a proxy-facing username/password, and optionally a
-   concurrent-stream limit) and assign it to that xtream code.
+   concurrent-stream limit) and assign it to a credential on that provider.
 
-When a backend has multiple base URLs, enter one URL per line. The proxy
-checks their service ports in parallel for each new request and uses the
-reachable URL with the lowest connection latency.
+When a provider has multiple base URLs, enter one URL per line. Address
+selection uses monitored TCP latency, keeps the current address when the
+latency difference is small, and probes directly when no healthy monitoring
+data is available.
 
-The admin dashboard checks every configured address every 5 minutes and
-shows its current status, connection latency, and uptime over the latest
-60 checks. This recent history resets when the proxy restarts.
+Health checks run every 5 minutes. The dashboard shows the latest 60 checks
+and 24-hour/7-day uptime. Check history is stored in SQLite and retained for
+7 days across restarts.
 
 Give that user's proxy username/password to their IPTV player instead
 of the real upstream credentials. They can point their player at:
@@ -130,95 +87,86 @@ per source IP.
 
 ## With Docker
 
-```Yaml
-volumes:
-  # SQLite database holding users and xtream-code backends.
-  # Mounted as a directory so the file survives container recreation.
-  - ./data:/data
-ports:
-  - 8080:8080
-environment:
-  DB_PATH: /data/iptv-proxy.db
-  PORT: 8080
-  HOSTNAME: localhost
-  GIN_MODE: release
-  ADMIN_USER: admin
-  ADMIN_PASSWORD: change-me
-```
+The included [docker-compose.yml](docker-compose.yml) builds the app locally
+and stores the database in `./data`. Set `HOSTNAME`, `ADMIN_USER`, and
+`ADMIN_PASSWORD` before starting it:
 
-```Shell
+```sh
 docker compose up --build -d
 ```
 
-Then visit `http://localhost:8080/admin` to add backends and users.
+Then visit `http://localhost:8080/admin` to add providers and users.
 
-## TLS with Traefik
+For public access, terminate TLS with a reverse proxy and set `HTTPS=1`,
+`ADVERTISED_PORT=443`, and `HOSTNAME` to your domain. `HTTPS` changes generated
+URLs and cookie settings; the app itself still listens over HTTP.
+The [Traefik examples](traefik/) are optional and need your own domain and
+certificate configuration. They reference Traefik v2.4; review the image
+version before using them.
 
-Copy the `./traefik` folder's contents into the repo root:
+## Outbound proxy settings
 
-```Shell
-cp -r ./traefik/* .
-mkdir -p Traefik/etc/traefik Traefik/log
+Open **Proxy settings** from the admin dashboard to configure an outbound
+HTTP, HTTPS, or SOCKS5 proxy. Choose **Custom proxy**, enter a URL, enable it,
+and save. An authenticated URL can use `http://username:password@host:port`.
+
+You can also choose **Environment variables** to use Go's
+[standard environment variables](https://pkg.go.dev/net/http#ProxyFromEnvironment).
+Set both variables to route requests to HTTP and HTTPS providers:
+
+```sh
+export HTTP_PROXY=http://proxy.example.com:3128
+export HTTPS_PROXY=http://proxy.example.com:3128
+iptv-proxy --hostname localhost --admin-user admin --admin-password change-me
 ```
 
-`docker-compose` sample with Traefik:
+For SOCKS5, use `socks5://proxy.example.com:1080` as the value of both
+variables. Go also supports `socks5h://` with proxy-side DNS resolution.
+An authenticated proxy URL can use `scheme://username:password@host:port`;
+URL-encode special characters in the username and password.
 
-```Yaml
-version: "3"
-services:
-  iptv-proxy:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - ./data:/data
-    container_name: "iptv-proxy"
-    restart: on-failure
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.iptv-proxy.rule=Host(`iptv.proxyexample.xyz`)"
-      - "traefik.http.routers.iptv-proxy.entrypoints=websecure"
-      - "traefik.http.routers.iptv-proxy.tls.certresolver=mydnschallenge"
-      - "traefik.http.services.iptv-proxy.loadbalancer.server.port=8080"
-    environment:
-      DB_PATH: /data/iptv-proxy.db
-      PORT: 8080
-      ADVERTISED_PORT: 443
-      HOSTNAME: iptv.proxyexample.xyz
-      GIN_MODE: release
-      HTTPS: 1
-      ADMIN_USER: admin
-      ADMIN_PASSWORD: change-me
+With Docker, add these entries under the `iptv-proxy` service's `environment`
+block, replacing the URL with your proxy address:
 
-  traefik:
-    restart: always
-    image: traefik:v2.4
-    read_only: true
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./Traefik/traefik.yaml:/traefik.yaml:ro
-      - ./Traefik/etc/traefik:/etc/traefik/
-      - ./Traefik/log:/var/log/traefik/
+```yaml
+HTTP_PROXY: socks5://proxy.example.com:1080
+HTTPS_PROXY: socks5://proxy.example.com:1080
+NO_PROXY: localhost,127.0.0.1
 ```
 
-Replace `iptv.proxyexample.xyz` with your own domain, then:
+The settings page shows environment proxy addresses with authentication hidden.
+Its enable switch can bypass the environment proxy without changing those values.
+UI settings are stored in SQLite and apply to new requests immediately; active
+streams keep their connections. A saved custom URL overrides environment settings
+when **Custom proxy** is selected. Leave the URL blank to keep the saved value.
+Custom mode routes all provider HTTP requests through that proxy, without
+`NO_PROXY` bypasses. Proxy settings are encrypted at rest when an encryption key
+is configured; otherwise they are stored in plaintext.
 
-```Shell
-docker compose up --build -d
-```
+Restart the process or recreate the container after changing environment variables.
+In environment mode, `NO_PROXY` bypasses the proxy for listed hosts, as do
+localhost and loopback addresses. `ALL_PROXY` is not used by this app's HTTP
+transport. Settings apply across providers, with no per-provider toggle.
+
+An outbound proxy is useful when you need another network route or public
+exit IP. It adds a network hop and must support your streaming bandwidth;
+SOCKS5 alone does not encrypt traffic.
+
+**Limitation:** health checks and address selection still make direct TCP
+connections. Their status and latency do not describe the proxied route.
+A provider reachable only through the proxy can fail selection when multiple
+addresses are enabled. Use one enabled address per provider in that case.
+This setting does not route all server traffic through the proxy.
 
 ## Building from source
 
-```Shell
+```sh
 go build .
 ```
 
 or, to also run the test suite:
 
-```Shell
+```sh
 go vet ./...
 go test ./...
 ```
@@ -232,7 +180,7 @@ Set `--encryption-key-file` (or `ENCRYPTION_KEY`) to a 32-byte AES-256
 key (raw or base64) to encrypt upstream Xtream usernames/passwords at
 rest instead of storing them in plaintext. Generate one with:
 
-```Shell
+```sh
 openssl rand -base64 32 > /run/secrets/iptv-proxy.key
 ```
 
@@ -241,7 +189,7 @@ migration once (it backs up the database file to
 `<db-path>.bak-<timestamp>` before touching anything, and applies the
 change in a single transaction):
 
-```Shell
+```sh
 iptv-proxy encrypt-credentials --db-path ./iptv-proxy.db --encryption-key-file /run/secrets/iptv-proxy.key
 ```
 
@@ -265,17 +213,8 @@ both together in your backup process.
   attempts count against the limit, so a legitimate player hitting
   auth-protected endpoints repeatedly is never throttled.
 - All admin state-changing requests require a matching CSRF token.
-- Run behind HTTPS (directly or via a reverse proxy like Traefik) and
+- Terminate HTTPS at a reverse proxy and
   pass `--https` so cookies are marked `Secure`.
-
-## Project layout
-
-- `cmd/` — CLI entry point (Cobra/Viper)
-- `pkg/server/` — Xtream-codes proxying, routing, per-request auth
-- `pkg/store/` — SQLite-backed users and xtream-code backends
-- `pkg/admin/` — the `/admin` web UI
-- `pkg/ratelimit/` — the per-IP failure limiter used by both admin and proxy auth
-- `pkg/xtream-proxy/` — thin wrapper around the upstream Xtream-codes client library
 
 ## License
 

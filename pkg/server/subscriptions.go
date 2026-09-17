@@ -21,6 +21,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
@@ -100,7 +101,7 @@ func (c *Config) checkSubscriptions(ctx context.Context) {
 				continue
 			}
 
-			expiry, err := fetchSubscriptionExpiry(ctx, resolved)
+			expiry, err := fetchSubscriptionExpiry(ctx, resolved, c.httpClient)
 			if err != nil {
 				slog.Warn("subscription check failed", "backend", backend.Name, "credential", cred.ID, "error", err)
 				continue
@@ -113,11 +114,15 @@ func (c *Config) checkSubscriptions(ctx context.Context) {
 	}
 }
 
-func fetchSubscriptionExpiry(ctx context.Context, backend store.ResolvedBackend) (SubscriptionExpiry, error) {
+func fetchSubscriptionExpiry(ctx context.Context, backend store.ResolvedBackend, clients ...*http.Client) (SubscriptionExpiry, error) {
 	loginCtx, cancel := context.WithTimeout(ctx, subscriptionCheckTimeout)
 	defer cancel()
 
-	cli, err := xtreamapi.New(loginCtx, backend.XtreamUser, backend.XtreamPassword, backend.BaseURL, "iptv-proxy")
+	httpClient := http.DefaultClient
+	if len(clients) > 0 {
+		httpClient = clients[0]
+	}
+	cli, err := xtreamapi.NewWithHTTP(loginCtx, backend.XtreamUser, backend.XtreamPassword, backend.BaseURL, "iptv-proxy", httpClient)
 	if err != nil {
 		return SubscriptionExpiry{}, err
 	}
