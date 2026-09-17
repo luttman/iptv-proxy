@@ -58,6 +58,9 @@ func TestXtreamCodeAddresses_BulkAddThenToggle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST new error: %v", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST new: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
 	resp.Body.Close() // nolint: errcheck
 
 	codes, err := srv.Store.ListXtreamCodes()
@@ -73,6 +76,9 @@ func TestXtreamCodeAddresses_BulkAddThenToggle(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("POST addresses error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST addresses: status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 	resp.Body.Close() // nolint: errcheck
 
@@ -93,6 +99,9 @@ func TestXtreamCodeAddresses_BulkAddThenToggle(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("POST toggle error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST toggle: status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 	resp.Body.Close() // nolint: errcheck
 
@@ -128,6 +137,9 @@ func TestXtreamCodeAddresses_BulkAddThenToggle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST address delete error: %v", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST address delete: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
 	resp.Body.Close() // nolint: errcheck
 
 	remaining, err := srv.Store.ListAddresses(xcID)
@@ -157,6 +169,9 @@ func TestCredentialUpdate_RenamesAndKeepsPasswordWhenBlank(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("POST credential edit error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST credential edit: status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 	resp.Body.Close() // nolint: errcheck
 
@@ -206,6 +221,9 @@ func TestCredentials_AddAndDeleteProtected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST credentials error: %v", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST credentials: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
 	resp.Body.Close() // nolint: errcheck
 
 	credentials, err := srv.Store.ListCredentials(xcID)
@@ -235,6 +253,9 @@ func TestCredentials_AddAndDeleteProtected(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("POST credential delete error: %v", err)
+	}
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("POST credential delete: status = %d, want %d", resp2.StatusCode, http.StatusOK)
 	}
 	resp2.Body.Close() // nolint: errcheck
 
@@ -273,6 +294,9 @@ func TestUserForm_PicksSpecificCredentialUnderProvider(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("POST users/new error: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST users/new: status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 	resp.Body.Close() // nolint: errcheck
 

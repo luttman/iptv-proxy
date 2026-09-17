@@ -175,7 +175,9 @@ const styleBlock = `<title>iptv-proxy admin</title>` + themeInit + `
   .add-link { font-size: 0.88rem; font-weight: 600; color: var(--accent); text-decoration: none; }
   .help { max-width: 360px; margin: 0.35rem 0 0; color: var(--muted); font-size: 0.78rem; line-height: 1.45; text-wrap: pretty; }
   .link-btn { background: none; border: none; cursor: pointer; padding: 0; }
-  dialog { border: none; border-radius: var(--radius); padding: 1.5rem; background: var(--panel); color: var(--text); max-width: 420px; width: 90%; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
+  dialog { border: none; border-radius: var(--radius); padding: 1.5rem; background: var(--panel); color: var(--text); max-width: 420px; width: 90%; max-height: 85vh; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
+  dialog.dialog-wide { max-width: 720px; }
+  dialog h3 { margin-bottom: 0.4rem; }
   dialog::backdrop { background: rgba(0,0,0,0.5); }
   dialog h2 { margin-top: 0; }
   .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.6rem; margin-top: 1.25rem; }
@@ -217,8 +219,14 @@ function bindAjaxForms() {
       fetch(form.action, { method: 'POST', body: new FormData(form), credentials: 'same-origin' })
         .then(function (r) {
           if (!r.ok) return r.text().then(function (t) { throw new Error(t || ('status ' + r.status)); });
-          var dialog = form.closest('dialog');
-          if (dialog) dialog.close();
+          // Only leaf popups (add/edit forms) close on success; a row
+          // action living directly inside a bigger dialog (e.g. an
+          // address toggle inside "Manage") must not take that whole
+          // dialog down with it.
+          if (form.hasAttribute('data-close-dialog-on-success')) {
+            var dialog = form.closest('dialog');
+            if (dialog) dialog.close();
+          }
           softRefreshWrap();
         })
         .catch(function (err) { alert('Error: ' + err.message); });
@@ -272,6 +280,13 @@ function fillDialogForm(btn) {
 }
 
 function softRefreshWrap() {
+  // A dialog that's still open at this point (e.g. "Manage") sits
+  // inside .wrap and would otherwise be silently destroyed and
+  // recreated closed by the innerHTML swap below, right as its own
+  // content (an address/credential list) is what just changed.
+  var reopenId = null;
+  document.querySelectorAll('.wrap dialog[open]').forEach(function (d) { reopenId = d.id; });
+
   fetch(location.href, { credentials: 'same-origin' })
     .then(function (r) { return r.text(); })
     .then(function (html) {
@@ -280,6 +295,10 @@ function softRefreshWrap() {
       if (fresh) document.querySelector('.wrap').innerHTML = fresh.innerHTML;
       bindAjaxForms();
       bindDialogButtons();
+      if (reopenId) {
+        var dialog = document.getElementById(reopenId);
+        if (dialog) dialog.showModal();
+      }
     })
     .catch(function () {});
 }
@@ -395,7 +414,7 @@ const dashboardPage = styleBlock + themeToggle + `
           {{end}}
         </td>
         <td class="actions">
-          <a class="btn-link" href="/admin/xtream-codes/{{.ID}}/edit">Manage</a>
+          <button type="button" class="btn-link" data-open-dialog="manageDialog-{{.ID}}">Manage</button>
           <form class="inline ajax-form" method="post" action="/admin/xtream-codes/{{.ID}}/delete" data-confirm="Delete this xtream code?">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="btn btn-sm btn-danger">Delete</button>
@@ -443,22 +462,148 @@ const dashboardPage = styleBlock + themeToggle + `
        action re-renders their server-side content too — e.g. the
        credential <select> below must pick up a just-added xtream
        code/credential immediately, not the page's stale initial load. -->
+  {{range .XtreamCodes}}
+  {{$code := .}}
+  {{$addrs := index $.AddressesByCode .ID}}
+  <dialog id="manageDialog-{{$code.ID}}" class="dialog-wide">
+    <h2>Manage {{$code.Name}}</h2>
+
+    <h3>Rename</h3>
+    <form method="post" action="/admin/xtream-codes/{{$code.ID}}/edit" class="ajax-form">
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <label for="name-{{$code.ID}}">Name</label>
+      <input id="name-{{$code.ID}}" type="text" name="name" value="{{$code.Name}}" autocomplete="off" required>
+      <button type="submit" class="btn">Save</button>
+    </form>
+
+    <div class="panel-header">
+      <h3>Addresses</h3>
+      <button type="button" class="add-link link-btn"
+        data-open-dialog="addAddressDialog" data-fill-form="addAddressDialogForm"
+        data-action="/admin/xtream-codes/{{$code.ID}}/addresses" data-title="Add addresses to {{$code.Name}}">+ Add addresses</button>
+    </div>
+    <div class="table-scroll"><table>
+      <tr><th>Address</th><th>Status</th><th></th></tr>
+      {{range $addrs}}
+      <tr>
+        <td class="mono">{{.Address}}</td>
+        <td>
+          <form class="inline ajax-form" method="post" action="/admin/xtream-codes/{{$code.ID}}/addresses/{{.ID}}/toggle">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">
+            <button type="submit" class="btn-sm {{if .Enabled}}btn{{else}}btn-link{{end}}">{{if .Enabled}}Enabled{{else}}Disabled{{end}}</button>
+          </form>
+        </td>
+        <td class="actions">
+          <form class="inline ajax-form" method="post" action="/admin/xtream-codes/{{$code.ID}}/addresses/{{.ID}}/delete" data-confirm="Remove this address?">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr class="empty-row"><td colspan="3">No addresses yet</td></tr>
+      {{end}}
+    </table></div>
+
+    <div class="panel-header">
+      <h3>Credentials</h3>
+      <button type="button" class="add-link link-btn"
+        data-open-dialog="addCredentialDialog" data-fill-form="addCredentialDialogForm"
+        data-action="/admin/xtream-codes/{{$code.ID}}/credentials" data-title="Add credential to {{$code.Name}}">+ Add credential</button>
+    </div>
+    <div class="table-scroll"><table>
+      <tr><th>Name</th><th>Username</th><th></th></tr>
+      {{range $code.Credentials}}
+      <tr>
+        <td>{{if .Name}}{{.Name}}{{else}}&mdash;{{end}}</td>
+        <td class="mono">{{.XtreamUser}}</td>
+        <td class="actions">
+          <button type="button" class="btn-link btn-sm"
+            data-open-dialog="editCredentialDialog" data-fill-form="editCredentialForm"
+            data-action="/admin/xtream-codes/{{$code.ID}}/credentials/{{.ID}}/edit" data-title="Edit credential"
+            data-field-name="{{.Name}}" data-field-xtream_user="{{.XtreamUser}}">Edit</button>
+          <form class="inline ajax-form" method="post" action="/admin/xtream-codes/{{$code.ID}}/credentials/{{.ID}}/delete" data-confirm="Delete this credential?">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr class="empty-row"><td colspan="3">No credentials yet</td></tr>
+      {{end}}
+    </table></div>
+
+    <div class="dialog-actions">
+      <button type="button" class="btn-link" data-close-dialog>Close</button>
+    </div>
+  </dialog>
+  {{end}}
+
+  <dialog id="addAddressDialog">
+    <h2>Add addresses</h2>
+    <form method="post" id="addAddressDialogForm" class="ajax-form" data-close-dialog-on-success>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="addresses">Addresses</label>
+      <textarea id="addresses" name="addresses" placeholder="http://backup2.example.tv:8080"></textarea>
+      <p class="help">One address per line. Paste several at once; each becomes its own toggleable row.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn-link" data-close-dialog>Cancel</button>
+        <button type="submit" class="btn">Add</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="addCredentialDialog">
+    <h2>Add credential</h2>
+    <form method="post" id="addCredentialDialogForm" class="ajax-form" data-close-dialog-on-success>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="add_cred_name">Name (optional)</label>
+      <input id="add_cred_name" type="text" name="name" autocomplete="off" placeholder="e.g. Mom's account">
+      <label for="add_cred_user">Xtream username</label>
+      <input id="add_cred_user" type="text" name="xtream_user" autocomplete="off" required>
+      <label for="add_cred_pass">Xtream password</label>
+      <input id="add_cred_pass" type="password" name="xtream_password" autocomplete="new-password" required>
+      <div class="dialog-actions">
+        <button type="button" class="btn-link" data-close-dialog>Cancel</button>
+        <button type="submit" class="btn">Add credential</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="editCredentialDialog">
+    <h2>Edit credential</h2>
+    <form method="post" id="editCredentialForm" class="ajax-form" data-close-dialog-on-success>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="edit_cred_name">Name (optional)</label>
+      <input id="edit_cred_name" type="text" name="name" autocomplete="off" placeholder="e.g. Mom's account">
+      <label for="edit_cred_user">Xtream username</label>
+      <input id="edit_cred_user" type="text" name="xtream_user" autocomplete="off" required>
+      <label for="edit_cred_pass">Xtream password (leave blank to keep current)</label>
+      <input id="edit_cred_pass" type="password" name="xtream_password" autocomplete="new-password">
+      <div class="dialog-actions">
+        <button type="button" class="btn-link" data-close-dialog>Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="newXtreamCodeDialog">
     <h2>New xtream code</h2>
-    <form method="post" action="/admin/xtream-codes/new" class="ajax-form">
+    <form method="post" action="/admin/xtream-codes/new" class="ajax-form" data-close-dialog-on-success>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label for="new_xc_name">Name</label>
       <input id="new_xc_name" type="text" name="name" autocomplete="off" required autofocus>
       <label for="new_xc_base_url">Base URLs</label>
       <textarea id="new_xc_base_url" name="base_url" placeholder="http://primary.example.tv:8080&#10;http://backup.example.tv:8080" required></textarea>
-      <p class="help">Enter one address per line. Toggle individual addresses on/off, or add more, from the provider's Manage page afterwards.</p>
+      <p class="help">Enter one address per line. Toggle individual addresses on/off, or add more, from the provider's Manage popup afterwards.</p>
       <label for="new_xc_cred_name">Credential name (optional)</label>
       <input id="new_xc_cred_name" type="text" name="credential_name" autocomplete="off" placeholder="e.g. Mom's account">
       <label for="new_xc_user">Xtream username</label>
       <input id="new_xc_user" type="text" name="xtream_user" autocomplete="off" required>
       <label for="new_xc_pass">Xtream password</label>
       <input id="new_xc_pass" type="password" name="xtream_password" autocomplete="new-password" required>
-      <p class="help">You can add more username/password pairs from the provider's Manage page afterwards.</p>
+      <p class="help">You can add more username/password pairs from the provider's Manage popup afterwards.</p>
       <div class="dialog-actions">
         <button type="button" class="btn-link" data-close-dialog>Cancel</button>
         <button type="submit" class="btn">Save</button>
@@ -468,7 +613,7 @@ const dashboardPage = styleBlock + themeToggle + `
 
   <dialog id="userFormDialog">
     <h2>New user</h2>
-    <form method="post" id="userFormDialogForm" class="ajax-form">
+    <form method="post" id="userFormDialogForm" class="ajax-form" data-close-dialog-on-success>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label for="uf_username">Username</label>
       <input id="uf_username" type="text" name="username" autocomplete="off" required autofocus>
@@ -562,132 +707,9 @@ setInterval(refreshHealth, 10000);
 </script>
 ` + ajaxFormsScript
 
-const xtreamCodeManagePage = styleBlock + themeToggle + `
-<div class="wrap">
-  <header class="topbar"><h1>iptv-proxy admin</h1><nav><a href="/admin">&larr; Dashboard</a></nav></header>
-
-  <div class="panel" style="max-width:480px;">
-    <h2>Rename</h2>
-    <form method="post" action="/admin/xtream-codes/{{.ID}}/edit" class="ajax-form">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label for="name">Name</label>
-      <input id="name" type="text" name="name" value="{{.Name}}" autocomplete="off" required>
-      <button type="submit" class="btn">Save</button>
-    </form>
-  </div>
-
-  <div class="panel">
-    <div class="panel-header">
-      <h2>Addresses</h2>
-      <button type="button" class="add-link link-btn" data-open-dialog="addAddressDialog">+ Add addresses</button>
-    </div>
-    <div class="table-scroll"><table>
-      <tr><th>Address</th><th>Status</th><th></th></tr>
-      {{range .Addresses}}
-      <tr>
-        <td class="mono">{{.Address}}</td>
-        <td>
-          <form class="inline ajax-form" method="post" action="/admin/xtream-codes/{{$.ID}}/addresses/{{.ID}}/toggle">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">
-            <button type="submit" class="btn-sm {{if .Enabled}}btn{{else}}btn-link{{end}}">{{if .Enabled}}Enabled{{else}}Disabled{{end}}</button>
-          </form>
-        </td>
-        <td class="actions">
-          <form class="inline ajax-form" method="post" action="/admin/xtream-codes/{{$.ID}}/addresses/{{.ID}}/delete" data-confirm="Remove this address?">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-          </form>
-        </td>
-      </tr>
-      {{else}}
-      <tr class="empty-row"><td colspan="3">No addresses yet</td></tr>
-      {{end}}
-    </table></div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-header">
-      <h2>Credentials</h2>
-      <button type="button" class="add-link link-btn" data-open-dialog="addCredentialDialog">+ Add credential</button>
-    </div>
-    <div class="table-scroll"><table>
-      <tr><th>Name</th><th>Username</th><th></th></tr>
-      {{range .Credentials}}
-      <tr>
-        <td>{{if .Name}}{{.Name}}{{else}}&mdash;{{end}}</td>
-        <td class="mono">{{.XtreamUser}}</td>
-        <td class="actions">
-          <button type="button" class="btn-link btn-sm"
-            data-open-dialog="editCredentialDialog" data-fill-form="editCredentialForm"
-            data-action="/admin/xtream-codes/{{$.ID}}/credentials/{{.ID}}/edit"
-            data-field-name="{{.Name}}" data-field-xtream_user="{{.XtreamUser}}">Edit</button>
-          <form class="inline ajax-form" method="post" action="/admin/xtream-codes/{{$.ID}}/credentials/{{.ID}}/delete" data-confirm="Delete this credential?">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-          </form>
-        </td>
-      </tr>
-      {{else}}
-      <tr class="empty-row"><td colspan="3">No credentials yet</td></tr>
-      {{end}}
-    </table></div>
-  </div>
-</div>
-
-<dialog id="addAddressDialog">
-  <h2>Add addresses</h2>
-  <form method="post" action="/admin/xtream-codes/{{.ID}}/addresses" class="ajax-form">
-    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-    <label for="addresses">Addresses</label>
-    <textarea id="addresses" name="addresses" placeholder="http://backup2.example.tv:8080"></textarea>
-    <p class="help">One address per line. Paste several at once; each becomes its own toggleable row.</p>
-    <div class="dialog-actions">
-      <button type="button" class="btn-link" data-close-dialog>Cancel</button>
-      <button type="submit" class="btn">Add</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog id="addCredentialDialog">
-  <h2>Add credential</h2>
-  <form method="post" action="/admin/xtream-codes/{{.ID}}/credentials" class="ajax-form">
-    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-    <label for="add_cred_name">Name (optional)</label>
-    <input id="add_cred_name" type="text" name="name" autocomplete="off" placeholder="e.g. Mom's account">
-    <label for="add_cred_user">Xtream username</label>
-    <input id="add_cred_user" type="text" name="xtream_user" autocomplete="off" required>
-    <label for="add_cred_pass">Xtream password</label>
-    <input id="add_cred_pass" type="password" name="xtream_password" autocomplete="new-password" required>
-    <div class="dialog-actions">
-      <button type="button" class="btn-link" data-close-dialog>Cancel</button>
-      <button type="submit" class="btn">Add credential</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog id="editCredentialDialog">
-  <h2>Edit credential</h2>
-  <form method="post" id="editCredentialForm" class="ajax-form">
-    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-    <label for="edit_cred_name">Name (optional)</label>
-    <input id="edit_cred_name" type="text" name="name" autocomplete="off" placeholder="e.g. Mom's account">
-    <label for="edit_cred_user">Xtream username</label>
-    <input id="edit_cred_user" type="text" name="xtream_user" autocomplete="off" required>
-    <label for="edit_cred_pass">Xtream password (leave blank to keep current)</label>
-    <input id="edit_cred_pass" type="password" name="xtream_password" autocomplete="new-password">
-    <div class="dialog-actions">
-      <button type="button" class="btn-link" data-close-dialog>Cancel</button>
-      <button type="submit" class="btn">Save</button>
-    </div>
-  </form>
-</dialog>
-` + ajaxFormsScript
-
 var templates = template.Must(template.New("root").Parse(""))
 
 func init() {
 	template.Must(templates.New("login").Parse(loginPage))
 	template.Must(templates.New("dashboard").Parse(dashboardPage))
-	template.Must(templates.New("xtreamCodeManage").Parse(xtreamCodeManagePage))
 }

@@ -194,7 +194,7 @@ func (a *admin) dashboard(ctx *gin.Context) {
 // xtreamCodeCreate creates a provider from the "bulk add" dialog: a
 // name, one or more addresses pasted at once, and its first
 // credential. Further addresses/credentials are managed afterwards
-// from the provider's Manage page.
+// from the provider's Manage popup on the dashboard.
 func (a *admin) xtreamCodeCreate(ctx *gin.Context) {
 	xc, err := a.srv.Store.CreateXtreamCode(ctx.PostForm("name"))
 	if err == nil {
@@ -211,41 +211,6 @@ func (a *admin) xtreamCodeCreate(ctx *gin.Context) {
 	ctx.Redirect(http.StatusFound, "/admin")
 }
 
-func (a *admin) xtreamCodeEditForm(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		ctx.String(http.StatusBadRequest, "invalid id")
-		return
-	}
-
-	xc, err := a.srv.Store.GetXtreamCode(id)
-	if err != nil {
-		ctx.String(http.StatusNotFound, "%s", err)
-		return
-	}
-
-	addresses, err := a.srv.Store.ListAddresses(id)
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "%s", err)
-		return
-	}
-
-	credentials, err := a.srv.Store.ListCredentials(id)
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "%s", err)
-		return
-	}
-
-	ctx.Header("Content-Type", "text/html; charset=utf-8")
-	templates.ExecuteTemplate(ctx.Writer, "xtreamCodeManage", gin.H{ // nolint: errcheck
-		"CSRFToken":   a.csrfToken(ctx),
-		"ID":          xc.ID,
-		"Name":        xc.Name,
-		"Addresses":   addresses,
-		"Credentials": credentials,
-	})
-}
-
 func (a *admin) xtreamCodeUpdate(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
@@ -258,7 +223,7 @@ func (a *admin) xtreamCodeUpdate(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, "/admin/xtream-codes/"+ctx.Param("id")+"/edit")
+	ctx.Redirect(http.StatusFound, "/admin")
 }
 
 func (a *admin) xtreamCodeDelete(ctx *gin.Context) {
@@ -292,15 +257,10 @@ func (a *admin) addressesBulkAdd(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, "/admin/xtream-codes/"+ctx.Param("id")+"/edit")
+	ctx.Redirect(http.StatusFound, "/admin")
 }
 
 func (a *admin) addressToggle(ctx *gin.Context) {
-	xcID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		ctx.String(http.StatusBadRequest, "invalid id")
-		return
-	}
 	addrID, err := strconv.ParseInt(ctx.Param("addressId"), 10, 64)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, "invalid address id")
@@ -312,15 +272,10 @@ func (a *admin) addressToggle(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, fmt.Sprintf("/admin/xtream-codes/%d/edit", xcID))
+	ctx.Redirect(http.StatusFound, "/admin")
 }
 
 func (a *admin) addressDelete(ctx *gin.Context) {
-	xcID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		ctx.String(http.StatusBadRequest, "invalid id")
-		return
-	}
 	addrID, err := strconv.ParseInt(ctx.Param("addressId"), 10, 64)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, "invalid address id")
@@ -332,7 +287,7 @@ func (a *admin) addressDelete(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, fmt.Sprintf("/admin/xtream-codes/%d/edit", xcID))
+	ctx.Redirect(http.StatusFound, "/admin")
 }
 
 func (a *admin) credentialCreate(ctx *gin.Context) {
@@ -347,15 +302,10 @@ func (a *admin) credentialCreate(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, "/admin/xtream-codes/"+ctx.Param("id")+"/edit")
+	ctx.Redirect(http.StatusFound, "/admin")
 }
 
 func (a *admin) credentialUpdate(ctx *gin.Context) {
-	xcID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		ctx.String(http.StatusBadRequest, "invalid id")
-		return
-	}
 	credID, err := strconv.ParseInt(ctx.Param("credId"), 10, 64)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, "invalid credential id")
@@ -367,15 +317,10 @@ func (a *admin) credentialUpdate(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, fmt.Sprintf("/admin/xtream-codes/%d/edit", xcID))
+	ctx.Redirect(http.StatusFound, "/admin")
 }
 
 func (a *admin) credentialDelete(ctx *gin.Context) {
-	xcID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		ctx.String(http.StatusBadRequest, "invalid id")
-		return
-	}
 	credID, err := strconv.ParseInt(ctx.Param("credId"), 10, 64)
 	if err != nil {
 		ctx.String(http.StatusBadRequest, "invalid credential id")
@@ -391,7 +336,7 @@ func (a *admin) credentialDelete(ctx *gin.Context) {
 		return
 	}
 
-	ctx.Redirect(http.StatusFound, fmt.Sprintf("/admin/xtream-codes/%d/edit", xcID))
+	ctx.Redirect(http.StatusFound, "/admin")
 }
 
 // maxStreamsFromForm parses the max_concurrent_streams field,
