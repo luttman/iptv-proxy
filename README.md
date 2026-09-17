@@ -13,6 +13,24 @@ web admin UI. Two users assigned to two different backends are fully
 isolated from each other — neither ever sees the other's upstream
 credentials.
 
+## Dashboard
+
+Everything after login is one page: stat tiles, upstream health, the
+providers (xtream codes) you've configured, and the proxy users assigned
+to them. It's all AJAX and popups — adding an address or editing a
+credential doesn't reload anything.
+
+![Dashboard overview](docs/dashboard.png)
+
+Each address is checked every 5 minutes, and the last 60 checks are kept
+so the 24h/7d columns mean something instead of just "up right now."
+Recent history is a real sparkline of those checks. Clicking Manage on a
+provider fetches its addresses and credentials on demand rather than
+rendering all of that into every page load — matters once you've got a
+dozen-plus providers instead of one or two.
+
+![Manage popup](docs/manage-popup.png)
+
 ## About this fork
 
 This is a fork of [pierre-emmanuelJ/iptv-proxy](https://github.com/pierre-emmanuelJ/iptv-proxy),
