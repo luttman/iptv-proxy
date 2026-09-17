@@ -237,7 +237,7 @@ const styleBlock = `<meta name="viewport" content="width=device-width, initial-s
   .code-health.unknown { color: var(--muted); }
   .code-meta { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; font-size: 0.78rem; color: var(--muted); }
   .code-expiry.status-down { font-weight: 700; }
-  .code-actions { display: flex; gap: 0.5rem; margin-top: auto; padding-top: 0.35rem; }
+  .code-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: auto; padding-top: 0.35rem; }
   .code-actions form { flex: 0 0 auto; }
 
   @media (max-width: 640px) {
