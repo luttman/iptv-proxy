@@ -244,7 +244,7 @@ const dashboardPage = styleBlock + themeToggle + `
       <tbody id="healthBody">
       {{range .BackendHealth}}
       <tr>
-        <td><span class="badge">{{.Backend}}</span></td>
+        <td>{{range .Backends}}<span class="badge">{{.}}</span> {{end}}</td>
         <td class="mono health-address">{{.BaseURL}}</td>
         <td><span class="status-pill {{if .Up}}status-up{{else}}status-down{{end}}">{{if .Up}}Up{{else}}Down{{end}}</span></td>
         <td class="ping">{{if .Up}}{{.LatencyMS}} ms{{else}}&mdash;{{end}}</td>
@@ -353,7 +353,8 @@ function refreshHealth() {
       }
       body.innerHTML = data.addresses.map(function (item) {
         var status = item.Up ? 'Up' : 'Down';
-        return '<tr><td><span class="badge">' + escapeHtml(item.Backend) + '</span></td>' +
+        var backends = (item.Backends || []).map(function (b) { return '<span class="badge">' + escapeHtml(b) + '</span>'; }).join(' ');
+        return '<tr><td>' + backends + '</td>' +
           '<td class="mono health-address">' + escapeHtml(item.BaseURL) + '</td>' +
           '<td><span class="status-pill ' + (item.Up ? 'status-up' : 'status-down') + '">' + status + '</span></td>' +
           '<td class="ping">' + (item.Up ? item.LatencyMS + ' ms' : '&mdash;') + '</td>' +

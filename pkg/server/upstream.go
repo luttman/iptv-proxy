@@ -48,9 +48,12 @@ type probeResult struct {
 	delay   time.Duration
 }
 
-// UpstreamHealth is the current and recent status of one backend address.
+// UpstreamHealth is the current and recent status of one address. A
+// ping only tests whether the host is reachable, not which account
+// is behind it, so an address shared by several xtream-code backends
+// gets one row listing all of them rather than one row each.
 type UpstreamHealth struct {
-	Backend          string
+	Backends         []string
 	BaseURL          string
 	Up               bool
 	LatencyMS        int64
@@ -111,7 +114,7 @@ func (c *Config) bestKnownAddress(backendName string, addresses []string) (strin
 	var healthy []candidate
 	knownAny := false
 	for _, addr := range addresses {
-		health, seen := c.upstreamHealth[backendName+"\x00"+addr]
+		health, seen := c.upstreamHealth[addr]
 		if !seen {
 			continue
 		}
@@ -232,23 +235,21 @@ func (c *Config) monitorUpstreams(ctx context.Context) {
 	}
 }
 
+type backendRef struct {
+	id   int64
+	name string
+}
+
 func (c *Config) checkUpstreams(ctx context.Context) {
 	backends, err := c.Store.ListXtreamCodes()
 	if err != nil {
 		return
 	}
 
-	type target struct {
-		backendID   int64
-		backendName string
-		address     string
-	}
-	var targets []target
-	uniqueAddresses := map[string]bool{}
+	addressBackends := map[string][]backendRef{}
 	for _, backend := range backends {
 		for _, address := range upstreamAddresses(backend) {
-			targets = append(targets, target{backendID: backend.ID, backendName: backend.Name, address: address})
-			uniqueAddresses[address] = true
+			addressBackends[address] = append(addressBackends[address], backendRef{backend.ID, backend.Name})
 		}
 	}
 
@@ -263,28 +264,23 @@ func (c *Config) checkUpstreams(ctx context.Context) {
 	probeCtx, cancel := context.WithTimeout(ctx, upstreamProbeTimeout)
 	defer cancel()
 
-	results := make(chan addressResult, len(uniqueAddresses))
-	for address := range uniqueAddresses {
+	results := make(chan addressResult, len(addressBackends))
+	for address := range addressBackends {
 		go func(address string) { results <- addressResult{address, probeAddress(probeCtx, address)} }(address)
 	}
 
-	resultByAddress := make(map[string]probeResult, len(uniqueAddresses))
-	for range uniqueAddresses {
-		r := <-results
-		resultByAddress[r.address] = r.probeResult
-	}
-
-	seen := make(map[string]bool, len(targets))
 	now := time.Now()
-	for _, t := range targets {
-		seen[t.backendName+"\x00"+t.address] = true
-		c.recordHealth(t.backendID, t.backendName, t.address, resultByAddress[t.address], now)
+	seen := make(map[string]bool, len(addressBackends))
+	for range addressBackends {
+		r := <-results
+		seen[r.address] = true
+		c.recordHealth(addressBackends[r.address], r.address, r.probeResult, now)
 	}
 
 	c.upstreamHealthLock.Lock()
-	for key := range c.upstreamHealth {
-		if !seen[key] {
-			delete(c.upstreamHealth, key)
+	for address := range c.upstreamHealth {
+		if !seen[address] {
+			delete(c.upstreamHealth, address)
 		}
 	}
 	c.upstreamHealthLock.Unlock()
@@ -292,25 +288,32 @@ func (c *Config) checkUpstreams(ctx context.Context) {
 	c.Store.PruneUpstreamChecks(now.Add(-uptimeRetention)) // nolint: errcheck
 }
 
-func (c *Config) recordHealth(backendID int64, backend, address string, result probeResult, checkedAt time.Time) {
+func (c *Config) recordHealth(backends []backendRef, address string, result probeResult, checkedAt time.Time) {
 	up := result.baseURL != ""
 	latencyMS := result.delay.Milliseconds()
 	if up && latencyMS == 0 {
 		latencyMS = 1
 	}
 
-	key := backend + "\x00" + address
+	names := make([]string, len(backends))
+	for i, b := range backends {
+		names[i] = b.name
+	}
+	sort.Strings(names)
+
 	c.upstreamHealthLock.Lock()
-	health := c.upstreamHealth[key]
-	health.Backend = backend
+	health := c.upstreamHealth[address]
+	health.Backends = names
 	health.BaseURL = address
 	health.Up = up
 	health.LatencyMS = latencyMS
 	health.CheckedAtUnix = checkedAt.Unix()
-	c.upstreamHealth[key] = health
+	c.upstreamHealth[address] = health
 	c.upstreamHealthLock.Unlock()
 
-	c.Store.RecordUpstreamCheck(backendID, address, up, latencyMS, checkedAt) // nolint: errcheck
+	for _, b := range backends {
+		c.Store.RecordUpstreamCheck(b.id, address, up, latencyMS, checkedAt) // nolint: errcheck
+	}
 }
 
 // BackendHealth returns a stable snapshot for the admin UI, combining
@@ -335,8 +338,23 @@ func (c *Config) BackendHealth() []UpstreamHealth {
 
 	now := time.Now()
 	for i := range rows {
-		id, ok := idByName[rows[i].Backend]
-		if !ok {
+		// History/uptime are persisted per backend ID (so they survive
+		// a backend rename), but every backend sharing this address
+		// has been recording identical rows since the dedup above, so
+		// any one of them (the lowest ID, roughly the oldest / most
+		// complete history) represents the address as a whole.
+		var id int64
+		found := false
+		for _, name := range rows[i].Backends {
+			backendID, ok := idByName[name]
+			if !ok {
+				continue
+			}
+			if !found || backendID < id {
+				id, found = backendID, true
+			}
+		}
+		if !found {
 			continue
 		}
 
@@ -351,17 +369,6 @@ func (c *Config) BackendHealth() []UpstreamHealth {
 		}
 	}
 
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Backend == rows[j].Backend {
-			if rows[i].Up != rows[j].Up {
-				return rows[i].Up
-			}
-			if rows[i].Up && rows[i].LatencyMS != rows[j].LatencyMS {
-				return rows[i].LatencyMS < rows[j].LatencyMS
-			}
-			return rows[i].BaseURL < rows[j].BaseURL
-		}
-		return rows[i].Backend < rows[j].Backend
-	})
+	sort.Slice(rows, func(i, j int) bool { return rows[i].BaseURL < rows[j].BaseURL })
 	return rows
 }

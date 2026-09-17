@@ -153,8 +153,8 @@ func TestLiveStream_FailsOverToBackupOnServerError(t *testing.T) {
 	// failover deterministically prefer "bad" first, exercising the
 	// retry path instead of racing which httptest server accepts the
 	// bootstrap TCP probe fastest.
-	c.upstreamHealth["provider-a\x00"+bad.URL] = UpstreamHealth{Up: true, LatencyMS: 1}
-	c.upstreamHealth["provider-a\x00"+good.URL] = UpstreamHealth{Up: true, LatencyMS: 500}
+	c.upstreamHealth[bad.URL] = UpstreamHealth{Up: true, LatencyMS: 1}
+	c.upstreamHealth[good.URL] = UpstreamHealth{Up: true, LatencyMS: 500}
 
 	resp, err := http.Get(proxy.URL + "/live/alice/hunter2/42.ts")
 	if err != nil {
@@ -199,8 +199,8 @@ func TestLiveStream_DoesNotFailOverOnInvalidCredentials(t *testing.T) {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
-	c.upstreamHealth["provider-a\x00"+primary.URL] = UpstreamHealth{Up: true, LatencyMS: 1}
-	c.upstreamHealth["provider-a\x00"+backup.URL] = UpstreamHealth{Up: true, LatencyMS: 500}
+	c.upstreamHealth[primary.URL] = UpstreamHealth{Up: true, LatencyMS: 1}
+	c.upstreamHealth[backup.URL] = UpstreamHealth{Up: true, LatencyMS: 500}
 
 	resp, err := http.Get(proxy.URL + "/live/alice/hunter2/42.ts")
 	if err != nil {

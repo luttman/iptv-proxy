@@ -65,8 +65,8 @@ func TestSelectUpstreamUsesMonitoringResultsWithoutProbing(t *testing.T) {
 
 	// Neither address is actually reachable; if selectUpstream fell
 	// back to probing it would fail. Seed monitoring data instead.
-	c.upstreamHealth["acme\x00http://slow.invalid"] = UpstreamHealth{Up: true, LatencyMS: 200}
-	c.upstreamHealth["acme\x00http://fast.invalid"] = UpstreamHealth{Up: true, LatencyMS: 10}
+	c.upstreamHealth["http://slow.invalid"] = UpstreamHealth{Up: true, LatencyMS: 200}
+	c.upstreamHealth["http://fast.invalid"] = UpstreamHealth{Up: true, LatencyMS: 10}
 
 	got, err := c.selectUpstream(context.Background(), backend, "")
 	if err != nil {
@@ -81,8 +81,8 @@ func TestSelectUpstreamKeepsCurrentWhenDifferenceIsSmall(t *testing.T) {
 	c := newTestConfig(t)
 	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
 
-	c.upstreamHealth["acme\x00http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 40}
-	c.upstreamHealth["acme\x00http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20}
+	c.upstreamHealth["http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 40}
+	c.upstreamHealth["http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20}
 	c.currentAddress = map[string]string{"acme": "http://a.invalid"}
 
 	got, err := c.selectUpstream(context.Background(), backend, "")
@@ -98,8 +98,8 @@ func TestSelectUpstreamSwitchesWhenDifferenceIsLarge(t *testing.T) {
 	c := newTestConfig(t)
 	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
 
-	c.upstreamHealth["acme\x00http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 500}
-	c.upstreamHealth["acme\x00http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20}
+	c.upstreamHealth["http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 500}
+	c.upstreamHealth["http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20}
 	c.currentAddress = map[string]string{"acme": "http://a.invalid"}
 
 	got, err := c.selectUpstream(context.Background(), backend, "")
@@ -115,8 +115,8 @@ func TestSelectUpstreamExcludesFailedAddress(t *testing.T) {
 	c := newTestConfig(t)
 	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
 
-	c.upstreamHealth["acme\x00http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 5}
-	c.upstreamHealth["acme\x00http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 100}
+	c.upstreamHealth["http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 5}
+	c.upstreamHealth["http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 100}
 
 	got, err := c.selectUpstream(context.Background(), backend, "http://a.invalid")
 	if err != nil {
@@ -134,8 +134,8 @@ func TestSelectUpstreamStaleDataStillUsed(t *testing.T) {
 	// Data from well outside the health-check interval is still the
 	// best information available and should still be honored, rather
 	// than triggering a live probe on every request.
-	c.upstreamHealth["acme\x00http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20, CheckedAtUnix: time.Now().Add(-2 * time.Hour).Unix()}
-	c.upstreamHealth["acme\x00http://b.invalid"] = UpstreamHealth{Up: false, LatencyMS: 0, CheckedAtUnix: time.Now().Add(-2 * time.Hour).Unix()}
+	c.upstreamHealth["http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20, CheckedAtUnix: time.Now().Add(-2 * time.Hour).Unix()}
+	c.upstreamHealth["http://b.invalid"] = UpstreamHealth{Up: false, LatencyMS: 0, CheckedAtUnix: time.Now().Add(-2 * time.Hour).Unix()}
 
 	got, err := c.selectUpstream(context.Background(), backend, "")
 	if err != nil {
@@ -198,13 +198,14 @@ func TestCheckUpstreamsDoesNotDuplicateProbesForSharedAddress(t *testing.T) {
 	}
 
 	health := c.BackendHealth()
-	if len(health) != 2 {
-		t.Fatalf("BackendHealth() = %+v, want one row per backend despite the shared address", health)
+	if len(health) != 1 {
+		t.Fatalf("BackendHealth() = %+v, want a single row for the shared address", health)
 	}
-	for _, h := range health {
-		if !h.Up {
-			t.Errorf("BackendHealth() row %+v, want Up", h)
-		}
+	if !health[0].Up {
+		t.Errorf("BackendHealth() row %+v, want Up", health[0])
+	}
+	if len(health[0].Backends) != 2 {
+		t.Errorf("BackendHealth() row Backends = %v, want both backend names listed", health[0].Backends)
 	}
 }
 
@@ -216,8 +217,9 @@ func TestRecordHealthPersistsToStore(t *testing.T) {
 	}
 
 	now := time.Now()
-	c.recordHealth(xc.ID, "provider-a", "http://example.com", probeResult{baseURL: "http://example.com", delay: 12 * time.Millisecond}, now)
-	c.recordHealth(xc.ID, "provider-a", "http://example.com", probeResult{}, now.Add(time.Minute))
+	refs := []backendRef{{id: xc.ID, name: "provider-a"}}
+	c.recordHealth(refs, "http://example.com", probeResult{baseURL: "http://example.com", delay: 12 * time.Millisecond}, now)
+	c.recordHealth(refs, "http://example.com", probeResult{}, now.Add(time.Minute))
 
 	pct, ok, err := c.Store.UpstreamUptime(xc.ID, "http://example.com", now.Add(-time.Hour))
 	if err != nil {
