@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -95,6 +96,10 @@ type Config struct {
 	subscriptionExpiry     map[int64]SubscriptionExpiry
 	subscriptionExpiryLock sync.RWMutex
 
+	// bandwidthBytes is a running total of bytes proxied since process
+	// start; monitorBandwidth periodically snapshots the delta.
+	bandwidthBytes atomic.Int64
+
 	// httpClient is shared across every proxied stream/API request so
 	// upstream connections get pooled and reused instead of paying a
 	// fresh TCP/TLS handshake on every channel switch. Its Transport
@@ -158,6 +163,7 @@ func (c *Config) Serve() error {
 	defer stopHealthChecks()
 	go c.monitorUpstreams(healthCtx)
 	go c.monitorSubscriptions(healthCtx)
+	go c.monitorBandwidth(healthCtx)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", c.HostConfig.Port),

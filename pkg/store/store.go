@@ -98,6 +98,13 @@ CREATE TABLE IF NOT EXISTS upstream_checks (
 	latency_ms INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_upstream_checks_lookup ON upstream_checks(xtream_code_id, address, checked_at);
+
+CREATE TABLE IF NOT EXISTS bandwidth_samples (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	sampled_at TIMESTAMP NOT NULL,
+	bytes INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bandwidth_samples_time ON bandwidth_samples(sampled_at);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)

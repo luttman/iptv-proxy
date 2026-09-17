@@ -20,12 +20,36 @@ package admin
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/server"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
 )
+
+// formatBandwidth converts raw byte counters into the units people
+// actually read (Mbps, GB), so the template stays free of math.
+func formatBandwidth(stats server.BandwidthStats) gin.H {
+	current := "—"
+	if stats.CurrentKnown {
+		current = fmt.Sprintf("%.1f Mbps", stats.CurrentBytesPerSec*8/1e6)
+	}
+
+	peak := "—"
+	if stats.PeakKnown {
+		peak = fmt.Sprintf("%.1f Mbps", stats.PeakBytesPerSec*8/1e6)
+	}
+
+	return gin.H{
+		"Current":    current,
+		"Peak":       peak,
+		"PeakAtUnix": stats.PeakAtUnix,
+		"Last24hGB":  fmt.Sprintf("%.2f", float64(stats.Last24hBytes)/1e9),
+		"Last7dGB":   fmt.Sprintf("%.2f", float64(stats.Last7dBytes)/1e9),
+	}
+}
 
 func (a *admin) loginPage(ctx *gin.Context) {
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
@@ -115,6 +139,7 @@ func (a *admin) dashboard(ctx *gin.Context) {
 		"BackendHealth":        health,
 		"OnlineBackends":       online,
 		"SubscriptionExpiries": a.srv.SubscriptionExpiries(),
+		"Bandwidth":            formatBandwidth(a.srv.BandwidthStats()),
 		"CSRFToken":            a.csrfToken(ctx),
 	})
 }

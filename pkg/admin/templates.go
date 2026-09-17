@@ -232,6 +232,22 @@ const dashboardPage = styleBlock + themeToggle + `
       <div class="value" id="healthCount">{{.OnlineBackends}} / {{len .BackendHealth}}</div>
       <div class="label">Addresses online</div>
     </div>
+    <div class="stat-card">
+      <div class="value">{{.Bandwidth.Current}}</div>
+      <div class="label">Current throughput</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">{{.Bandwidth.Last24hGB}} GB</div>
+      <div class="label">Last 24h</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">{{.Bandwidth.Last7dGB}} GB</div>
+      <div class="label">Last 7d</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">{{.Bandwidth.Peak}}</div>
+      <div class="label">Peak (7d)</div>
+    </div>
   </div>
 
   <div class="panel">

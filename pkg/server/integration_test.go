@@ -92,6 +92,10 @@ func TestLiveStream_RoutesToAssignedBackend(t *testing.T) {
 	if hitPath != wantPath {
 		t.Errorf("upstream received path %q, want %q", hitPath, wantPath)
 	}
+
+	if got := c.bandwidthBytes.Load(); got != int64(len("stream-bytes")) {
+		t.Errorf("bandwidthBytes = %d, want %d (the streamed body should be counted)", got, len("stream-bytes"))
+	}
 }
 
 func TestLiveStream_WrongPasswordRejected(t *testing.T) {

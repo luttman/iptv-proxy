@@ -69,7 +69,7 @@ func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
 	mergeHttpHeader(ctx.Writer.Header(), resp.Header)
 	ctx.Status(resp.StatusCode)
 	ctx.Stream(func(w io.Writer) bool {
-		io.Copy(w, resp.Body) // nolint: errcheck
+		io.Copy(&countingWriter{w: w, counter: &c.bandwidthBytes}, resp.Body) // nolint: errcheck
 		return false
 	})
 }
