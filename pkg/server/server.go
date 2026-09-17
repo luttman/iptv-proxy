@@ -147,7 +147,6 @@ func NewServer(conf *config.ProxyConfig, st *store.Store) (*Config, error) {
 func newUpstreamHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   10 * time.Second,
 				KeepAlive: 30 * time.Second,

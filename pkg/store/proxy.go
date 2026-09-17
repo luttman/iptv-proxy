@@ -4,20 +4,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-
-	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
 )
 
-// ProxySettings controls outbound HTTP requests. Environment settings are the
-// default until an administrator saves an override.
+// ProxySettings controls outbound HTTP requests configured through the admin UI.
 type ProxySettings struct {
-	Enabled        bool
-	UseEnvironment bool
-	URL            string
+	Enabled bool
+	URL     string
 }
 
 func (s *Store) ProxySettings() (ProxySettings, error) {
-	settings := ProxySettings{Enabled: config.HasEnvironmentProxy(), UseEnvironment: true}
+	settings := ProxySettings{}
 	var value string
 	err := s.db.QueryRow(`SELECT value FROM settings WHERE name = 'outbound_proxy'`).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -30,8 +26,15 @@ func (s *Store) ProxySettings() (ProxySettings, error) {
 	if err != nil {
 		return settings, err
 	}
-	err = json.Unmarshal([]byte(value), &settings)
-	return settings, err
+	var saved struct {
+		ProxySettings
+		UseEnvironment bool // Read legacy settings without activating an unused custom URL.
+	}
+	err = json.Unmarshal([]byte(value), &saved)
+	if saved.UseEnvironment {
+		return settings, err
+	}
+	return saved.ProxySettings, err
 }
 
 func (s *Store) SaveProxySettings(settings ProxySettings) error {

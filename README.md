@@ -107,51 +107,24 @@ version before using them.
 ## Outbound proxy settings
 
 Open the **Proxy settings** popup from the admin dashboard to configure an outbound
-HTTP, HTTPS, or SOCKS5 proxy. Choose **Custom proxy**, enter a URL, enable it,
+HTTP, HTTPS, or SOCKS5 proxy. Enter a URL, enable it,
 and save. Use **Test proxy** to check the selected proxy before saving: it
 reports the exit IP and response time through ipify, without changing settings.
 The check has a 10-second timeout and does not measure streaming bandwidth.
 An authenticated URL can use `http://username:password@host:port`.
 
-You can also choose **Environment variables** to use Go's
-[standard environment variables](https://pkg.go.dev/net/http#ProxyFromEnvironment).
-Set both variables to route requests to HTTP and HTTPS providers:
+For SOCKS5, enter `socks5://proxy.example.com:1080` in the proxy URL field.
+Authenticated URLs use `scheme://username:password@host:port`; URL-encode
+special characters in the username and password.
 
-```sh
-export HTTP_PROXY=http://proxy.example.com:3128
-export HTTPS_PROXY=http://proxy.example.com:3128
-iptv-proxy --hostname localhost --admin-user admin --admin-password change-me
-```
+Proxy settings are managed only through the admin popup and stored in SQLite.
+The proxy is disabled until you configure and enable it. Your saved URL stays
+visible as plain text, and the popup stays open after saving. Changes apply to
+new requests immediately; active streams keep their connections. Settings
+apply across providers, with no per-provider toggle.
 
-For SOCKS5, use `socks5://proxy.example.com:1080` as the value of both
-variables. Go also supports `socks5h://` with proxy-side DNS resolution.
-An authenticated proxy URL can use `scheme://username:password@host:port`;
-URL-encode special characters in the username and password.
-
-With Docker, add these entries under the `iptv-proxy` service's `environment`
-block, replacing the URL with your proxy address:
-
-```yaml
-HTTP_PROXY: socks5://proxy.example.com:1080
-HTTPS_PROXY: socks5://proxy.example.com:1080
-NO_PROXY: localhost,127.0.0.1
-```
-
-The popup shows environment proxy addresses with authentication hidden. A proxy
-defaults to enabled when an environment proxy is configured; otherwise it is
-disabled. Your saved enable/disable choice is preserved.
-Its enable switch can bypass the environment proxy without changing those values.
-UI settings are stored in SQLite and apply to new requests immediately; active
-streams keep their connections. A saved custom URL overrides environment settings
-when **Custom proxy** is selected. Leave the URL blank to keep the saved value.
-Custom mode routes all provider HTTP requests through that proxy, without
-`NO_PROXY` bypasses. Proxy settings are encrypted at rest when an encryption key
-is configured; otherwise they are stored in plaintext.
-
-Restart the process or recreate the container after changing environment variables.
-In environment mode, `NO_PROXY` bypasses the proxy for listed hosts, as do
-localhost and loopback addresses. `ALL_PROXY` is not used by this app's HTTP
-transport. Settings apply across providers, with no per-provider toggle.
+Proxy settings are encrypted at rest when an encryption key is configured;
+otherwise they are stored in plaintext.
 
 An outbound proxy is useful when you need another network route or public
 exit IP. It adds a network hop and must support your streaming bandwidth;

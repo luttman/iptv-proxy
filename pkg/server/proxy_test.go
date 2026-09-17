@@ -5,8 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -101,80 +99,19 @@ func TestCustomProxyRoutesAPIAndDisables(t *testing.T) {
 	}
 }
 
-// ProxyFromEnvironment caches its configuration process-wide. A subprocess
-// gives this check an isolated environment regardless of other HTTP tests.
-func TestEnvironmentProxyToggle(t *testing.T) {
-	if os.Getenv("IPTV_PROXY_ENV_TEST") == "1" {
-		srv := proxyTestServer(t)
-		if !srv.ProxySettings().Enabled {
-			t.Fatal("configured environment proxy should default to enabled")
-		}
-		req, _ := http.NewRequest(http.MethodGet, "http://provider.example.com", nil)
-		u, err := srv.outboundProxy.proxy(req)
-		if err != nil || u == nil || u.String() != "http://proxy.example.com:3128" {
-			t.Fatalf("environment proxy: %v %v", u, err)
-		}
-		settings := srv.ProxySettings()
-		settings.Enabled = false
-		if err := srv.SetProxySettings(settings); err != nil {
-			t.Fatal(err)
-		}
-		if u, err := srv.outboundProxy.proxy(req); u != nil || err != nil {
-			t.Fatalf("disabled environment proxy: %v %v", u, err)
-		}
-		settings.Enabled = true
-		if err := srv.SetProxySettings(settings); err != nil {
-			t.Fatal(err)
-		}
-		if u, err := srv.outboundProxy.proxy(req); u == nil || err != nil {
-			t.Fatalf("re-enabled environment proxy: %v %v", u, err)
-		}
-		return
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestEnvironmentProxyToggle$")
-	for _, env := range os.Environ() {
-		name := strings.ToUpper(strings.SplitN(env, "=", 2)[0])
-		if name != "HTTP_PROXY" && name != "HTTPS_PROXY" && name != "NO_PROXY" && name != "REQUEST_METHOD" && name != "IPTV_PROXY_ENV_TEST" {
-			cmd.Env = append(cmd.Env, env)
-		}
-	}
-	cmd.Env = append(cmd.Env, "IPTV_PROXY_ENV_TEST=1", "HTTP_PROXY=http://proxy.example.com:3128", "NO_PROXY=")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("environment check: %v\n%s", err, output)
-	}
-}
-
-func TestProxyDisabledWithoutConfiguration(t *testing.T) {
-	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
-		t.Setenv(name, "")
-	}
+func TestProxyIgnoresEnvironment(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://proxy.example.com:3128")
+	t.Setenv("HTTPS_PROXY", "http://proxy.example.com:3128")
 	srv := proxyTestServer(t)
 	if srv.ProxySettings().Enabled {
-		t.Fatal("unconfigured proxy should default to disabled")
+		t.Fatal("unconfigured proxy should be disabled")
 	}
-	if err := srv.SetProxySettings(store.ProxySettings{Enabled: true, UseEnvironment: true}); err != nil {
-		t.Fatal(err)
+	req, _ := http.NewRequest(http.MethodGet, "https://provider.example.com", nil)
+	if u, err := srv.outboundProxy.proxy(req); u != nil || err != nil {
+		t.Fatalf("environment proxy used: %v %v", u, err)
 	}
-	if srv.ProxySettings().Enabled {
-		t.Fatal("cannot enable an unconfigured environment proxy")
-	}
-	// Also normalize the UI for settings saved by the previous version.
-	srv.outboundProxy.settings.Enabled = true
-	if srv.ProxySettings().Enabled {
-		t.Fatal("legacy unconfigured proxy should display disabled")
-	}
-	t.Setenv("https_proxy", "http://proxy.example.com:3128")
-	other := proxyTestServer(t)
-	if !other.ProxySettings().Enabled {
-		t.Fatal("lowercase environment proxy should default to enabled")
-	}
-	s := other.ProxySettings()
-	s.Enabled = false
-	if err := other.SetProxySettings(s); err != nil {
-		t.Fatal(err)
-	}
-	if saved, err := other.Store.ProxySettings(); err != nil || saved.Enabled {
-		t.Fatalf("explicit disable not persisted: %v", err)
+	if err := srv.SetProxySettings(store.ProxySettings{Enabled: true}); err == nil {
+		t.Fatal("enabled an empty proxy")
 	}
 }
 

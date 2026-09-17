@@ -404,6 +404,8 @@ function softRefreshWrap() {
   // staleness risk in doing this unconditionally.
   var md = document.getElementById('manageDialog');
   var reopenManageId = (md && md.open) ? md.dataset.providerId : null;
+  var proxyDialog = document.getElementById('proxyDialog');
+  var reopenProxy = proxyDialog && proxyDialog.open;
 
   fetch(location.href, { credentials: 'same-origin' })
     .then(function (r) { return r.text(); })
@@ -415,6 +417,11 @@ function softRefreshWrap() {
       bindDialogButtons();
       bindManageButtons();
       if (reopenManageId) openManageDialog(reopenManageId);
+      if (reopenProxy) {
+        var proxyDialog = document.getElementById('proxyDialog');
+        proxyDialog.showModal();
+        proxyDialog.querySelector('[data-proxy-result]').textContent = 'Proxy settings saved.';
+      }
     })
     .catch(function () {});
 }
@@ -872,23 +879,13 @@ var templates = template.Must(template.New("root").Parse(""))
 const proxyPage = `
     <div class="panel-header"><h2 id="proxy-title">Proxy settings</h2><span class="badge">{{if .Settings.Enabled}}Enabled{{else}}Disabled{{end}}</span></div>
     <p class="help">Applies to new playback and API requests for all providers. Active streams keep their connection. Without a configured proxy, requests connect directly.</p>
-    <form method="post" action="/admin/settings/proxy" class="ajax-form" data-close-dialog-on-success>
+    <form method="post" action="/admin/settings/proxy" class="ajax-form">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label for="proxy-source">Proxy source</label>
-      <select id="proxy-source" name="source">
-        <option value="environment" {{if .Settings.UseEnvironment}}selected{{end}}>Environment variables</option>
-        <option value="custom" {{if not .Settings.UseEnvironment}}selected{{end}}>Custom proxy</option>
-      </select>
-      <label for="proxy-url">Custom proxy URL</label>
-      <input id="proxy-url" name="proxy_url" type="password" autocomplete="new-password" placeholder="http://host:3128 or socks5://host:1080" aria-describedby="proxy-url-help">
-      <p id="proxy-url-help" class="mono">Saved proxy: {{.CustomProxy}}. Leave blank to keep it. Authentication is supported with username:password@host; saved credentials are hidden.</p>
+      <label for="proxy-url">Proxy URL</label>
+      <input id="proxy-url" name="proxy_url" type="text" value="{{.Settings.URL}}" autocomplete="off" spellcheck="false" placeholder="http://host:3128 or socks5://host:1080" aria-describedby="proxy-url-help">
+      <p id="proxy-url-help" class="help">Authentication is supported with username:password@host. Leave blank to keep the saved URL.</p>
       <label for="proxy-enabled"><input id="proxy-enabled" name="enabled" type="checkbox" style="width:auto" {{if .Settings.Enabled}}checked{{end}}> Enable outbound proxy</label>
-      <p class="mono">When disabled, new requests connect directly, even if environment variables configure a proxy.</p>
-      <details>
-        <summary>Environment configuration</summary>
-        <dl><dt>HTTP providers</dt><dd class="mono urls">{{.HTTPProxy}}</dd><dt>HTTPS providers</dt><dd class="mono urls">{{.HTTPSProxy}}</dd><dt>Bypass hosts (NO_PROXY)</dt><dd class="mono urls">{{if .NoProxy}}{{.NoProxy}}{{else}}None configured{{end}}</dd></dl>
-        <p class="help">Environment mode respects NO_PROXY and bypasses localhost. Custom mode uses the entered proxy for every provider. Restart after changing environment variables.</p>
-      </details>
+      <p class="mono">When disabled, new requests connect directly.</p>
       <p class="help">Health checks and address selection still connect directly. If a provider is reachable only through the proxy, enable just one address for it.</p>
       <div class="dialog-actions">
         <button type="button" class="btn" data-test-proxy>Test proxy</button>

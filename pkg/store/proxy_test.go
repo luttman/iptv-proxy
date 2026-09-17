@@ -1,10 +1,35 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLegacyProxySettings(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "legacy.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close() // nolint: errcheck
+	for _, environment := range []bool{false, true} {
+		raw := fmt.Sprintf(`{"Enabled":true,"UseEnvironment":%t,"URL":"http://proxy.example.com:3128"}`, environment)
+		if _, err := st.db.Exec(`INSERT INTO settings(name,value) VALUES('outbound_proxy',?) ON CONFLICT(name) DO UPDATE SET value=excluded.value`, raw); err != nil {
+			t.Fatal(err)
+		}
+		got, err := st.ProxySettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if environment && (got.Enabled || got.URL != "") {
+			t.Fatal("legacy environment mode activated a custom proxy")
+		}
+		if !environment && (!got.Enabled || got.URL != "http://proxy.example.com:3128") {
+			t.Fatal("legacy admin proxy settings lost")
+		}
+	}
+}
 
 func TestProxySettingsEncryptedAndRestored(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "proxy.db")

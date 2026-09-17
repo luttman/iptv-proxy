@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
 	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
 )
 
@@ -23,23 +22,9 @@ type outboundProxy struct {
 	settings store.ProxySettings
 }
 
-// TestOutboundProxy checks the selected proxy without saving or enabling it.
-// Environment mode tests HTTPS when available, otherwise HTTP.
+// TestOutboundProxy checks the entered proxy without saving or enabling it.
 func (c *Config) TestOutboundProxy(ctx context.Context, s store.ProxySettings) (string, error) {
-	s.Enabled = true
-	p := &outboundProxy{settings: s}
-	target := "https://api.ipify.org?format=json"
-	if s.UseEnvironment {
-		req, _ := http.NewRequest(http.MethodGet, target, nil)
-		u, err := p.proxy(req)
-		if err != nil {
-			return "", errors.New("invalid environment proxy configuration")
-		}
-		if u == nil {
-			target = "http://api.ipify.org?format=json"
-		}
-	}
-	return testOutboundProxy(ctx, s, target)
+	return testOutboundProxy(ctx, s, "https://api.ipify.org?format=json")
 }
 
 func testOutboundProxy(ctx context.Context, s store.ProxySettings, target string) (string, error) {
@@ -57,7 +42,7 @@ func testOutboundProxy(ctx context.Context, s store.ProxySettings, target string
 		return "", errors.New("enter a valid HTTP or SOCKS5 proxy URL")
 	}
 	if u == nil {
-		return "", errors.New("no proxy selected for the test destination; check the URL, environment variables, and NO_PROXY")
+		return "", errors.New("enter a proxy URL before testing")
 	}
 	client := newUpstreamHTTPClient()
 	transport := client.Transport.(*http.Transport)
@@ -107,15 +92,12 @@ func validateProxyURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-func (p *outboundProxy) proxy(req *http.Request) (*url.URL, error) {
+func (p *outboundProxy) proxy(_ *http.Request) (*url.URL, error) {
 	p.RLock()
 	s := p.settings
 	p.RUnlock()
 	if !s.Enabled {
 		return nil, nil
-	}
-	if s.UseEnvironment {
-		return http.ProxyFromEnvironment(req)
 	}
 	return validateProxyURL(s.URL)
 }
@@ -124,7 +106,7 @@ func (c *Config) ProxySettings() store.ProxySettings {
 	c.outboundProxy.RLock()
 	defer c.outboundProxy.RUnlock()
 	s := c.outboundProxy.settings
-	if s.UseEnvironment && !config.HasEnvironmentProxy() {
+	if s.URL == "" {
 		s.Enabled = false
 	}
 	return s
@@ -133,16 +115,13 @@ func (c *Config) ProxySettings() store.ProxySettings {
 // SetProxySettings saves first, then applies to new requests. Existing streams
 // keep their connection; idle connections are discarded.
 func (c *Config) SetProxySettings(s store.ProxySettings) error {
-	if s.UseEnvironment && !config.HasEnvironmentProxy() {
-		s.Enabled = false
-	}
 	s.URL = strings.TrimSpace(s.URL)
 	if s.URL != "" {
 		if _, err := validateProxyURL(s.URL); err != nil {
 			return err
 		}
-	} else if !s.UseEnvironment && s.Enabled {
-		return errors.New("enter a proxy URL before enabling a custom proxy")
+	} else if s.Enabled {
+		return errors.New("enter a proxy URL before enabling it")
 	}
 	c.outboundProxy.Lock()
 	defer c.outboundProxy.Unlock()
