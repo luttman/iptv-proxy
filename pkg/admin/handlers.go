@@ -114,8 +114,8 @@ func (a *admin) listCodesWithCredentials() ([]codeWithCredentials, error) {
 
 type dashboardUserRow struct {
 	store.User
-	XtreamCodeName string
-	CredentialUser string
+	XtreamCodeName  string
+	CredentialLabel string
 }
 
 func (a *admin) healthJSON(ctx *gin.Context) {
@@ -141,11 +141,11 @@ func (a *admin) dashboard(ctx *gin.Context) {
 		return
 	}
 
-	type credentialInfo struct{ codeName, username string }
+	type credentialInfo struct{ codeName, label string }
 	credentials := map[int64]credentialInfo{}
 	for _, c := range codes {
 		for _, cred := range c.Credentials {
-			credentials[cred.ID] = credentialInfo{codeName: c.Name, username: cred.XtreamUser}
+			credentials[cred.ID] = credentialInfo{codeName: c.Name, label: cred.Label()}
 		}
 	}
 
@@ -168,7 +168,7 @@ func (a *admin) dashboard(ctx *gin.Context) {
 	rows := make([]dashboardUserRow, 0, len(users))
 	for _, u := range users {
 		info := credentials[u.CredentialID]
-		rows = append(rows, dashboardUserRow{User: u, XtreamCodeName: info.codeName, CredentialUser: info.username})
+		rows = append(rows, dashboardUserRow{User: u, XtreamCodeName: info.codeName, CredentialLabel: info.label})
 	}
 	health := a.srv.BackendHealth()
 	online := 0
@@ -191,17 +191,10 @@ func (a *admin) dashboard(ctx *gin.Context) {
 	})
 }
 
-func (a *admin) xtreamCodeNewForm(ctx *gin.Context) {
-	ctx.Header("Content-Type", "text/html; charset=utf-8")
-	templates.ExecuteTemplate(ctx.Writer, "xtreamCodeNewForm", gin.H{ // nolint: errcheck
-		"CSRFToken": a.csrfToken(ctx),
-	})
-}
-
-// xtreamCodeCreate creates a provider from the "bulk add" form: a
+// xtreamCodeCreate creates a provider from the "bulk add" dialog: a
 // name, one or more addresses pasted at once, and its first
 // credential. Further addresses/credentials are managed afterwards
-// from the edit page.
+// from the provider's Manage page.
 func (a *admin) xtreamCodeCreate(ctx *gin.Context) {
 	xc, err := a.srv.Store.CreateXtreamCode(ctx.PostForm("name"))
 	if err == nil {
@@ -211,13 +204,7 @@ func (a *admin) xtreamCodeCreate(ctx *gin.Context) {
 		_, err = a.srv.Store.CreateCredential(xc.ID, ctx.PostForm("credential_name"), ctx.PostForm("xtream_user"), ctx.PostForm("xtream_password"))
 	}
 	if err != nil {
-		ctx.Header("Content-Type", "text/html; charset=utf-8")
-		templates.ExecuteTemplate(ctx.Writer, "xtreamCodeNewForm", gin.H{ // nolint: errcheck
-			"Error": err.Error(), "CSRFToken": a.csrfToken(ctx),
-			"Name": ctx.PostForm("name"), "BaseURL": ctx.PostForm("base_url"),
-			"CredentialName": ctx.PostForm("credential_name"),
-			"XtreamUser":     ctx.PostForm("xtream_user"), "XtreamPassword": ctx.PostForm("xtream_password"),
-		})
+		ctx.String(http.StatusInternalServerError, "%s", err)
 		return
 	}
 
@@ -419,73 +406,18 @@ func maxStreamsFromForm(ctx *gin.Context) int {
 	return n
 }
 
-func (a *admin) userNewForm(ctx *gin.Context) {
-	codes, err := a.listCodesWithCredentials()
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "%s", err)
-		return
-	}
-
-	ctx.Header("Content-Type", "text/html; charset=utf-8")
-	templates.ExecuteTemplate(ctx.Writer, "userForm", gin.H{ // nolint: errcheck
-		"Action":               "/admin/users/new",
-		"XtreamCodes":          codes,
-		"CSRFToken":            a.csrfToken(ctx),
-		"MaxConcurrentStreams": 1,
-	})
-}
-
 func (a *admin) userCreate(ctx *gin.Context) {
-	codes, err := a.listCodesWithCredentials()
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "%s", err)
-		return
-	}
-
 	maxStreams := maxStreamsFromForm(ctx)
 	credentialID, err := strconv.ParseInt(ctx.PostForm("credential_id"), 10, 64)
 	if err == nil {
 		_, err = a.srv.Store.CreateUser(ctx.PostForm("username"), ctx.PostForm("password"), credentialID, maxStreams)
 	}
 	if err != nil {
-		ctx.Header("Content-Type", "text/html; charset=utf-8")
-		templates.ExecuteTemplate(ctx.Writer, "userForm", gin.H{ // nolint: errcheck
-			"Action": "/admin/users/new", "Error": err.Error(), "CSRFToken": a.csrfToken(ctx),
-			"Username": ctx.PostForm("username"), "XtreamCodes": codes, "CredentialID": credentialID,
-			"MaxConcurrentStreams": maxStreams,
-		})
+		ctx.String(http.StatusBadRequest, "%s", err)
 		return
 	}
 
 	ctx.Redirect(http.StatusFound, "/admin")
-}
-
-func (a *admin) userEditForm(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		ctx.String(http.StatusBadRequest, "invalid id")
-		return
-	}
-
-	u, err := a.srv.Store.GetUser(id)
-	if err != nil {
-		ctx.String(http.StatusNotFound, "%s", err)
-		return
-	}
-
-	codes, err := a.listCodesWithCredentials()
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "%s", err)
-		return
-	}
-
-	ctx.Header("Content-Type", "text/html; charset=utf-8")
-	templates.ExecuteTemplate(ctx.Writer, "userForm", gin.H{ // nolint: errcheck
-		"Action": "/admin/users/" + ctx.Param("id") + "/edit", "CSRFToken": a.csrfToken(ctx),
-		"ID": u.ID, "Username": u.Username, "CredentialID": u.CredentialID,
-		"XtreamCodes":          codes,
-		"MaxConcurrentStreams": u.MaxConcurrentStreams,
-	})
 }
 
 func (a *admin) userUpdate(ctx *gin.Context) {
@@ -495,24 +427,13 @@ func (a *admin) userUpdate(ctx *gin.Context) {
 		return
 	}
 
-	codes, err := a.listCodesWithCredentials()
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "%s", err)
-		return
-	}
-
 	maxStreams := maxStreamsFromForm(ctx)
 	credentialID, err := strconv.ParseInt(ctx.PostForm("credential_id"), 10, 64)
 	if err == nil {
 		_, err = a.srv.Store.UpdateUser(id, ctx.PostForm("username"), ctx.PostForm("password"), credentialID, maxStreams)
 	}
 	if err != nil {
-		ctx.Header("Content-Type", "text/html; charset=utf-8")
-		templates.ExecuteTemplate(ctx.Writer, "userForm", gin.H{ // nolint: errcheck
-			"Action": "/admin/users/" + ctx.Param("id") + "/edit", "Error": err.Error(), "CSRFToken": a.csrfToken(ctx),
-			"ID": id, "Username": ctx.PostForm("username"), "XtreamCodes": codes, "CredentialID": credentialID,
-			"MaxConcurrentStreams": maxStreams,
-		})
+		ctx.String(http.StatusBadRequest, "%s", err)
 		return
 	}
 

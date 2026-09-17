@@ -64,7 +64,6 @@ func Register(srv *server.Config, creds Credentials) error {
 	authed.POST("/logout", a.csrfProtect, a.logout)
 	authed.GET("", a.dashboard)
 	authed.GET("/health.json", a.healthJSON)
-	authed.GET("/xtream-codes/new", a.xtreamCodeNewForm)
 	authed.POST("/xtream-codes/new", a.csrfProtect, a.xtreamCodeCreate)
 	authed.GET("/xtream-codes/:id/edit", a.xtreamCodeEditForm)
 	authed.POST("/xtream-codes/:id/edit", a.csrfProtect, a.xtreamCodeUpdate)
@@ -75,9 +74,7 @@ func Register(srv *server.Config, creds Credentials) error {
 	authed.POST("/xtream-codes/:id/credentials", a.csrfProtect, a.credentialCreate)
 	authed.POST("/xtream-codes/:id/credentials/:credId/edit", a.csrfProtect, a.credentialUpdate)
 	authed.POST("/xtream-codes/:id/credentials/:credId/delete", a.csrfProtect, a.credentialDelete)
-	authed.GET("/users/new", a.userNewForm)
 	authed.POST("/users/new", a.csrfProtect, a.userCreate)
-	authed.GET("/users/:id/edit", a.userEditForm)
 	authed.POST("/users/:id/edit", a.csrfProtect, a.userUpdate)
 	authed.POST("/users/:id/delete", a.csrfProtect, a.userDelete)
 

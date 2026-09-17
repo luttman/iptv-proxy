@@ -178,7 +178,8 @@ const styleBlock = `<title>iptv-proxy admin</title>` + themeInit + `
   dialog { border: none; border-radius: var(--radius); padding: 1.5rem; background: var(--panel); color: var(--text); max-width: 420px; width: 90%; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
   dialog::backdrop { background: rgba(0,0,0,0.5); }
   dialog h2 { margin-top: 0; }
-  .dialog-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1.25rem; }
+  .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.6rem; margin-top: 1.25rem; }
+  .dialog-actions .btn { margin-top: 0; }
   :focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
   @media (max-width: 640px) {
     body { padding-inline: 1rem; }
@@ -247,17 +248,27 @@ function bindDialogButtons() {
 // "Edit" dialog/form for whichever row's Edit button was clicked.
 function fillDialogForm(btn) {
   var form = document.getElementById(btn.getAttribute('data-fill-form'));
+  var dialog = form.closest('dialog');
   if (btn.hasAttribute('data-action')) form.action = btn.getAttribute('data-action');
-  // Never prefill password fields from a data attribute: clear them so
-  // reopening this dialog for a different row can't leak a previous
-  // row's typed-in value, and so "blank means keep current" holds.
-  form.querySelectorAll('input[type="password"]').forEach(function (f) { f.value = ''; });
+  // Reset first so reusing one dialog/form for both "add" and "edit"
+  // (across different rows) never leaks a previous row's values —
+  // including passwords, which are never prefilled from a data
+  // attribute anyway, so "blank means keep current" holds.
+  form.reset();
   for (var i = 0; i < btn.attributes.length; i++) {
     var attr = btn.attributes[i];
     if (attr.name.indexOf('data-field-') !== 0) continue;
     var field = form.querySelector('[name="' + attr.name.slice('data-field-'.length) + '"]');
     if (field) field.value = attr.value;
   }
+  if (dialog) {
+    var titleEl = dialog.querySelector('h2');
+    if (titleEl && btn.hasAttribute('data-title')) titleEl.textContent = btn.getAttribute('data-title');
+  }
+  var passwordField = form.querySelector('input[type="password"]');
+  if (passwordField) passwordField.required = btn.getAttribute('data-password-required') === '1';
+  var hint = form.querySelector('[data-password-hint]');
+  if (hint) hint.textContent = btn.getAttribute('data-password-hint') || 'Password';
 }
 
 function softRefreshWrap() {
@@ -365,7 +376,7 @@ const dashboardPage = styleBlock + themeToggle + `
   <div class="panel">
     <div class="panel-header">
       <h2>Xtream codes</h2>
-      <a class="add-link" href="/admin/xtream-codes/new">+ Add xtream code</a>
+      <button type="button" class="add-link link-btn" data-open-dialog="newXtreamCodeDialog">+ Add xtream code</button>
     </div>
     <div class="table-scroll"><table>
       <tr><th>Name</th><th>Addresses</th><th>Credentials</th><th>Expires</th><th></th></tr>
@@ -400,17 +411,22 @@ const dashboardPage = styleBlock + themeToggle + `
   <div class="panel">
     <div class="panel-header">
       <h2>Users</h2>
-      <a class="add-link" href="/admin/users/new">+ Add user</a>
+      <button type="button" class="add-link link-btn" data-open-dialog="userFormDialog" data-fill-form="userFormDialogForm"
+        data-action="/admin/users/new" data-title="New user" data-password-required="1" data-password-hint="Password">+ Add user</button>
     </div>
     <div class="table-scroll"><table>
       <tr><th>Username</th><th>Assigned credential</th><th>Max streams</th><th></th></tr>
       {{range .Users}}
       <tr>
         <td>{{.Username}}</td>
-        <td><span class="badge">{{.XtreamCodeName}}</span> <span class="mono">{{.CredentialUser}}</span></td>
+        <td><span class="badge">{{.XtreamCodeName}}</span> <span class="mono">{{.CredentialLabel}}</span></td>
         <td>{{if .MaxConcurrentStreams}}{{.MaxConcurrentStreams}}{{else}}Unlimited{{end}}</td>
         <td class="actions">
-          <a class="btn-link" href="/admin/users/{{.ID}}/edit">Edit</a>
+          <button type="button" class="btn-link"
+            data-open-dialog="userFormDialog" data-fill-form="userFormDialogForm"
+            data-action="/admin/users/{{.ID}}/edit" data-title="Edit user"
+            data-field-username="{{.Username}}" data-field-credential_id="{{.CredentialID}}" data-field-max_concurrent_streams="{{.MaxConcurrentStreams}}"
+            data-password-required="0" data-password-hint="Password (leave blank to keep current)">Edit</button>
           <form class="inline ajax-form" method="post" action="/admin/users/{{.ID}}/delete" data-confirm="Delete this user?">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="btn btn-sm btn-danger">Delete</button>
@@ -422,6 +438,63 @@ const dashboardPage = styleBlock + themeToggle + `
       {{end}}
     </table></div>
   </div>
+
+  <!-- Inside .wrap (not siblings after it) so a soft-refresh after any
+       action re-renders their server-side content too — e.g. the
+       credential <select> below must pick up a just-added xtream
+       code/credential immediately, not the page's stale initial load. -->
+  <dialog id="newXtreamCodeDialog">
+    <h2>New xtream code</h2>
+    <form method="post" action="/admin/xtream-codes/new" class="ajax-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="new_xc_name">Name</label>
+      <input id="new_xc_name" type="text" name="name" autocomplete="off" required autofocus>
+      <label for="new_xc_base_url">Base URLs</label>
+      <textarea id="new_xc_base_url" name="base_url" placeholder="http://primary.example.tv:8080&#10;http://backup.example.tv:8080" required></textarea>
+      <p class="help">Enter one address per line. Toggle individual addresses on/off, or add more, from the provider's Manage page afterwards.</p>
+      <label for="new_xc_cred_name">Credential name (optional)</label>
+      <input id="new_xc_cred_name" type="text" name="credential_name" autocomplete="off" placeholder="e.g. Mom's account">
+      <label for="new_xc_user">Xtream username</label>
+      <input id="new_xc_user" type="text" name="xtream_user" autocomplete="off" required>
+      <label for="new_xc_pass">Xtream password</label>
+      <input id="new_xc_pass" type="password" name="xtream_password" autocomplete="new-password" required>
+      <p class="help">You can add more username/password pairs from the provider's Manage page afterwards.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn-link" data-close-dialog>Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="userFormDialog">
+    <h2>New user</h2>
+    <form method="post" id="userFormDialogForm" class="ajax-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="uf_username">Username</label>
+      <input id="uf_username" type="text" name="username" autocomplete="off" required autofocus>
+      <label for="uf_password" data-password-hint>Password</label>
+      <input id="uf_password" type="password" name="password" autocomplete="new-password">
+      <label for="uf_credential_id">Xtream code / credential</label>
+      <select id="uf_credential_id" name="credential_id" required>
+        {{range .XtreamCodes}}
+        {{if .Credentials}}
+        <optgroup label="{{.Name}}">
+          {{range .Credentials}}
+          <option value="{{.ID}}">{{.Label}}</option>
+          {{end}}
+        </optgroup>
+        {{end}}
+        {{end}}
+      </select>
+      <label for="uf_max_streams">Max concurrent streams</label>
+      <input id="uf_max_streams" type="number" name="max_concurrent_streams" min="0" value="1" required>
+      <p class="help">Use 0 for unlimited streams.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn-link" data-close-dialog>Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>
+    </form>
+  </dialog>
 </div>
 
 <script>
@@ -488,32 +561,6 @@ setInterval(tickHealthTimes, 1000);
 setInterval(refreshHealth, 10000);
 </script>
 ` + ajaxFormsScript
-
-const xtreamCodeNewFormPage = styleBlock + themeToggle + `
-<div class="wrap">
-  <header class="topbar"><h1>iptv-proxy admin</h1><nav><a href="/admin">&larr; Dashboard</a></nav></header>
-  <div class="panel" style="max-width:480px;">
-    <h2>New xtream code</h2>
-    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-    <form method="post" action="/admin/xtream-codes/new">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label for="name">Name</label>
-      <input id="name" type="text" name="name" value="{{.Name}}" autocomplete="off" required autofocus>
-      <label for="base_url">Base URLs</label>
-      <textarea id="base_url" name="base_url" aria-describedby="base-url-help" placeholder="http://primary.example.tv:8080&#10;http://backup.example.tv:8080" required>{{.BaseURL}}</textarea>
-      <p class="help" id="base-url-help">Enter one address per line. Each becomes its own row you can toggle on/off, or add more to, from the edit page afterwards.</p>
-      <label for="credential_name">Credential name (optional)</label>
-      <input id="credential_name" type="text" name="credential_name" value="{{.CredentialName}}" autocomplete="off" placeholder="e.g. Mom's account">
-      <label for="xtream_user">Xtream username</label>
-      <input id="xtream_user" type="text" name="xtream_user" value="{{.XtreamUser}}" autocomplete="off" required>
-      <label for="xtream_password">Xtream password</label>
-      <input id="xtream_password" type="password" name="xtream_password" value="{{.XtreamPassword}}" autocomplete="new-password" required>
-      <p class="help">You can add more username/password pairs from the edit page afterwards.</p>
-      <button type="submit" class="btn">Save</button>
-    </form>
-  </div>
-</div>
-`
 
 const xtreamCodeManagePage = styleBlock + themeToggle + `
 <div class="wrap">
@@ -637,45 +684,10 @@ const xtreamCodeManagePage = styleBlock + themeToggle + `
 </dialog>
 ` + ajaxFormsScript
 
-const userFormPage = styleBlock + themeToggle + `
-<div class="wrap">
-  <header class="topbar"><h1>iptv-proxy admin</h1><nav><a href="/admin">&larr; Dashboard</a></nav></header>
-  <div class="panel" style="max-width:480px;">
-    <h2>{{if .ID}}Edit{{else}}New{{end}} user</h2>
-    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-    <form method="post" action="{{.Action}}">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label for="username">Username</label>
-      <input id="username" type="text" name="username" value="{{.Username}}" autocomplete="off" required autofocus>
-      <label for="password">Password{{if .ID}} (leave blank to keep current){{end}}</label>
-      <input id="password" type="password" name="password" autocomplete="new-password" {{if not .ID}}required{{end}}>
-      <label for="credential_id">Xtream code / credential</label>
-      <select id="credential_id" name="credential_id" required>
-        {{range .XtreamCodes}}
-        {{if .Credentials}}
-        <optgroup label="{{.Name}}">
-          {{range .Credentials}}
-          <option value="{{.ID}}" {{if eq .ID $.CredentialID}}selected{{end}}>{{.Label}}</option>
-          {{end}}
-        </optgroup>
-        {{end}}
-        {{end}}
-      </select>
-      <label for="max_concurrent_streams">Max concurrent streams</label>
-      <input id="max_concurrent_streams" type="number" name="max_concurrent_streams" value="{{.MaxConcurrentStreams}}" min="0" aria-describedby="stream-limit-help" required>
-      <p class="help" id="stream-limit-help">Use 0 for unlimited streams.</p>
-      <button type="submit" class="btn">Save</button>
-    </form>
-  </div>
-</div>
-`
-
 var templates = template.Must(template.New("root").Parse(""))
 
 func init() {
 	template.Must(templates.New("login").Parse(loginPage))
 	template.Must(templates.New("dashboard").Parse(dashboardPage))
-	template.Must(templates.New("xtreamCodeNewForm").Parse(xtreamCodeNewFormPage))
 	template.Must(templates.New("xtreamCodeManage").Parse(xtreamCodeManagePage))
-	template.Must(templates.New("userForm").Parse(userFormPage))
 }
