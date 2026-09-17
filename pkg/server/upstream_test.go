@@ -21,6 +21,7 @@ package server
 import (
 	"context"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -155,6 +156,55 @@ func TestSelectUpstreamCancellation(t *testing.T) {
 	_, err := c.selectUpstream(ctx, store.XtreamCode{BaseURL: "http://a.invalid http://b.invalid"}, "")
 	if err == nil {
 		t.Error("selectUpstream() with canceled context: want error, got nil")
+	}
+}
+
+func TestCheckUpstreamsDoesNotDuplicateProbesForSharedAddress(t *testing.T) {
+	var connections int32
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close() // nolint: errcheck
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			atomic.AddInt32(&connections, 1)
+			conn.Close() // nolint: errcheck
+		}
+	}()
+
+	c := newTestConfig(t)
+	addr := "http://" + listener.Addr().String()
+
+	// Two xtream codes sharing the same address: a ping only tests
+	// whether the host is reachable, not which account is behind it,
+	// so it should only be probed once per cycle.
+	if _, err := c.Store.CreateXtreamCode("provider-a", addr, "u1", "p1"); err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if _, err := c.Store.CreateXtreamCode("provider-b", addr, "u2", "p2"); err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+
+	c.checkUpstreams(context.Background())
+
+	if got := atomic.LoadInt32(&connections); got != 1 {
+		t.Errorf("connections to shared address = %d, want 1", got)
+	}
+
+	health := c.BackendHealth()
+	if len(health) != 2 {
+		t.Fatalf("BackendHealth() = %+v, want one row per backend despite the shared address", health)
+	}
+	for _, h := range health {
+		if !h.Up {
+			t.Errorf("BackendHealth() row %+v, want Up", h)
+		}
 	}
 }
 

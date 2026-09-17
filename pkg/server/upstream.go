@@ -244,32 +244,41 @@ func (c *Config) checkUpstreams(ctx context.Context) {
 		address     string
 	}
 	var targets []target
+	uniqueAddresses := map[string]bool{}
 	for _, backend := range backends {
 		for _, address := range upstreamAddresses(backend) {
 			targets = append(targets, target{backendID: backend.ID, backendName: backend.Name, address: address})
+			uniqueAddresses[address] = true
 		}
 	}
 
-	type healthResult struct {
-		target
+	// Probe each distinct address once: it only tests whether the host
+	// is reachable, not which backend's account is behind it, so two
+	// xtream codes pointing at the same address don't need separate
+	// probes to get the same answer.
+	type addressResult struct {
+		address string
 		probeResult
 	}
-	results := make(chan healthResult, len(targets))
 	probeCtx, cancel := context.WithTimeout(ctx, upstreamProbeTimeout)
 	defer cancel()
 
-	for _, item := range targets {
-		go func(item target) {
-			results <- healthResult{item, probeAddress(probeCtx, item.address)}
-		}(item)
+	results := make(chan addressResult, len(uniqueAddresses))
+	for address := range uniqueAddresses {
+		go func(address string) { results <- addressResult{address, probeAddress(probeCtx, address)} }(address)
+	}
+
+	resultByAddress := make(map[string]probeResult, len(uniqueAddresses))
+	for range uniqueAddresses {
+		r := <-results
+		resultByAddress[r.address] = r.probeResult
 	}
 
 	seen := make(map[string]bool, len(targets))
 	now := time.Now()
-	for range targets {
-		result := <-results
-		seen[result.backendName+"\x00"+result.address] = true
-		c.recordHealth(result.backendID, result.backendName, result.address, result.probeResult, now)
+	for _, t := range targets {
+		seen[t.backendName+"\x00"+t.address] = true
+		c.recordHealth(t.backendID, t.backendName, t.address, resultByAddress[t.address], now)
 	}
 
 	c.upstreamHealthLock.Lock()
