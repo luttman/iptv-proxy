@@ -30,18 +30,23 @@ import (
 // username doesn't exist or the password doesn't match.
 var ErrInvalidCredentials = errors.New("invalid username or password")
 
-// CreateUser inserts a new proxy user assigned to the given xtream
-// code. maxConcurrentStreams caps how many streams this user may have
-// open at once; 0 means unlimited.
-func (s *Store) CreateUser(username, password string, xtreamCodeID int64, maxConcurrentStreams int) (User, error) {
+// CreateUser inserts a new proxy user assigned to the given
+// credential. maxConcurrentStreams caps how many streams this user
+// may have open at once; 0 means unlimited.
+func (s *Store) CreateUser(username, password string, credentialID int64, maxConcurrentStreams int) (User, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return User{}, fmt.Errorf("hash password: %w", err)
 	}
 
+	credential, err := s.GetCredential(credentialID)
+	if err != nil {
+		return User{}, fmt.Errorf("create user: resolve credential: %w", err)
+	}
+
 	res, err := s.db.Exec(
-		`INSERT INTO users (username, password_hash, xtream_code_id, max_concurrent_streams) VALUES (?, ?, ?, ?)`,
-		username, string(hash), xtreamCodeID, maxConcurrentStreams,
+		`INSERT INTO users (username, password_hash, xtream_code_id, credential_id, max_concurrent_streams) VALUES (?, ?, ?, ?, ?)`,
+		username, string(hash), credential.XtreamCodeID, credentialID, maxConcurrentStreams,
 	)
 	if err != nil {
 		return User{}, fmt.Errorf("create user: %w", err)
@@ -55,13 +60,18 @@ func (s *Store) CreateUser(username, password string, xtreamCodeID int64, maxCon
 	return s.GetUser(id)
 }
 
-// UpdateUser updates a user's xtream-code assignment and stream
-// limit, and, if password is non-empty, its password too.
-func (s *Store) UpdateUser(id int64, username, password string, xtreamCodeID int64, maxConcurrentStreams int) (User, error) {
+// UpdateUser updates a user's credential assignment and stream limit,
+// and, if password is non-empty, its password too.
+func (s *Store) UpdateUser(id int64, username, password string, credentialID int64, maxConcurrentStreams int) (User, error) {
+	credential, err := s.GetCredential(credentialID)
+	if err != nil {
+		return User{}, fmt.Errorf("update user: resolve credential: %w", err)
+	}
+
 	if password == "" {
 		_, err := s.db.Exec(
-			`UPDATE users SET username = ?, xtream_code_id = ?, max_concurrent_streams = ? WHERE id = ?`,
-			username, xtreamCodeID, maxConcurrentStreams, id,
+			`UPDATE users SET username = ?, xtream_code_id = ?, credential_id = ?, max_concurrent_streams = ? WHERE id = ?`,
+			username, credential.XtreamCodeID, credentialID, maxConcurrentStreams, id,
 		)
 		if err != nil {
 			return User{}, fmt.Errorf("update user: %w", err)
@@ -76,8 +86,8 @@ func (s *Store) UpdateUser(id int64, username, password string, xtreamCodeID int
 	}
 
 	_, err = s.db.Exec(
-		`UPDATE users SET username = ?, password_hash = ?, xtream_code_id = ?, max_concurrent_streams = ? WHERE id = ?`,
-		username, string(hash), xtreamCodeID, maxConcurrentStreams, id,
+		`UPDATE users SET username = ?, password_hash = ?, xtream_code_id = ?, credential_id = ?, max_concurrent_streams = ? WHERE id = ?`,
+		username, string(hash), credential.XtreamCodeID, credentialID, maxConcurrentStreams, id,
 	)
 	if err != nil {
 		return User{}, fmt.Errorf("update user: %w", err)
@@ -98,7 +108,7 @@ func (s *Store) DeleteUser(id int64) error {
 // GetUser looks up a user by id.
 func (s *Store) GetUser(id int64) (User, error) {
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, xtream_code_id, max_concurrent_streams, created_at FROM users WHERE id = ?`,
+		`SELECT id, username, password_hash, credential_id, max_concurrent_streams, created_at FROM users WHERE id = ?`,
 		id,
 	)
 
@@ -107,7 +117,7 @@ func (s *Store) GetUser(id int64) (User, error) {
 
 // ListUsers returns all users ordered by username.
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id, username, password_hash, xtream_code_id, max_concurrent_streams, created_at FROM users ORDER BY username`)
+	rows, err := s.db.Query(`SELECT id, username, password_hash, credential_id, max_concurrent_streams, created_at FROM users ORDER BY username`)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -126,37 +136,66 @@ func (s *Store) ListUsers() ([]User, error) {
 }
 
 // Authenticate verifies a username/password pair and, on success,
-// returns the user along with the xtream-code backend it's assigned
-// to.
-func (s *Store) Authenticate(username, password string) (User, XtreamCode, error) {
+// returns the user along with the concrete backend (provider name,
+// enabled addresses, and this user's assigned credential) to proxy
+// their requests to.
+func (s *Store) Authenticate(username, password string) (User, ResolvedBackend, error) {
 	row := s.db.QueryRow(
-		`SELECT id, username, password_hash, xtream_code_id, max_concurrent_streams, created_at FROM users WHERE username = ?`,
+		`SELECT id, username, password_hash, credential_id, max_concurrent_streams, created_at FROM users WHERE username = ?`,
 		username,
 	)
 
 	user, err := scanUser(row)
 	if errors.Is(err, ErrNotFound) {
-		return User{}, XtreamCode{}, ErrInvalidCredentials
+		return User{}, ResolvedBackend{}, ErrInvalidCredentials
 	}
 	if err != nil {
-		return User{}, XtreamCode{}, err
+		return User{}, ResolvedBackend{}, err
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return User{}, XtreamCode{}, ErrInvalidCredentials
+		return User{}, ResolvedBackend{}, ErrInvalidCredentials
 	}
 
-	xc, err := s.GetXtreamCode(user.XtreamCodeID)
+	backend, err := s.resolveBackend(user.CredentialID)
 	if err != nil {
-		return User{}, XtreamCode{}, fmt.Errorf("resolve xtream code for user %q: %w", username, err)
+		return User{}, ResolvedBackend{}, fmt.Errorf("resolve backend for user %q: %w", username, err)
 	}
 
-	return user, xc, nil
+	return user, backend, nil
+}
+
+// resolveBackend builds the concrete backend a credential resolves
+// to: its provider's name and enabled addresses, plus the
+// credential's own xtream username/password.
+func (s *Store) resolveBackend(credentialID int64) (ResolvedBackend, error) {
+	credential, err := s.GetCredential(credentialID)
+	if err != nil {
+		return ResolvedBackend{}, err
+	}
+
+	code, err := s.GetXtreamCode(credential.XtreamCodeID)
+	if err != nil {
+		return ResolvedBackend{}, err
+	}
+
+	addresses, err := s.EnabledAddressesString(code.ID)
+	if err != nil {
+		return ResolvedBackend{}, err
+	}
+
+	return ResolvedBackend{
+		ID:             code.ID,
+		Name:           code.Name,
+		BaseURL:        addresses,
+		XtreamUser:     credential.XtreamUser,
+		XtreamPassword: credential.XtreamPassword,
+	}, nil
 }
 
 func scanUser(row rowScanner) (User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.XtreamCodeID, &u.MaxConcurrentStreams, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CredentialID, &u.MaxConcurrentStreams, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

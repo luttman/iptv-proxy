@@ -41,7 +41,7 @@ const (
 type resolvedUser struct {
 	ProxyUser            string
 	ProxyPassword        string
-	Backend              store.XtreamCode
+	Backend              store.ResolvedBackend
 	MaxConcurrentStreams int
 }
 

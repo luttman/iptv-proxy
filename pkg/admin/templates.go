@@ -233,19 +233,19 @@ const dashboardPage = styleBlock + themeToggle + `
       <div class="label">Addresses online</div>
     </div>
     <div class="stat-card">
-      <div class="value">{{.Bandwidth.Current}}</div>
+      <div class="value" id="bwCurrent">{{.Bandwidth.Current}}</div>
       <div class="label">Current throughput</div>
     </div>
     <div class="stat-card">
-      <div class="value">{{.Bandwidth.Last24hGB}} GB</div>
+      <div class="value" id="bw24h">{{.Bandwidth.Last24hGB}} GB</div>
       <div class="label">Last 24h</div>
     </div>
     <div class="stat-card">
-      <div class="value">{{.Bandwidth.Last7dGB}} GB</div>
+      <div class="value" id="bw7d">{{.Bandwidth.Last7dGB}} GB</div>
       <div class="label">Last 7d</div>
     </div>
     <div class="stat-card">
-      <div class="value">{{.Bandwidth.Peak}}</div>
+      <div class="value" id="bwPeak">{{.Bandwidth.Peak}}</div>
       <div class="label">Peak (7d)</div>
     </div>
   </div>
@@ -282,13 +282,14 @@ const dashboardPage = styleBlock + themeToggle + `
       <a class="add-link" href="/admin/xtream-codes/new">+ Add xtream code</a>
     </div>
     <div class="table-scroll"><table>
-      <tr><th>Name</th><th>Base URLs</th><th>Xtream user</th><th>Expires</th><th></th></tr>
+      <tr><th>Name</th><th>Addresses</th><th>Credentials</th><th>Expires</th><th></th></tr>
       {{range .XtreamCodes}}
       {{$exp := index $.SubscriptionExpiries .ID}}
+      {{$addrs := index $.AddressesByCode .ID}}
       <tr>
         <td><span class="badge">{{.Name}}</span></td>
-        <td class="mono urls">{{.BaseURL}}</td>
-        <td class="mono">{{.XtreamUser}}</td>
+        <td class="mono urls">{{range $addrs}}<div>{{.Address}}{{if not .Enabled}} <em>(disabled)</em>{{end}}</div>{{else}}&mdash;{{end}}</td>
+        <td class="mono">{{range .Credentials}}<div>{{.XtreamUser}}</div>{{else}}&mdash;{{end}}</td>
         <td>
           {{if eq $exp.CheckedAtUnix 0}}&mdash;
           {{else if not $exp.HasExpiry}}Unlimited
@@ -297,7 +298,7 @@ const dashboardPage = styleBlock + themeToggle + `
           {{end}}
         </td>
         <td class="actions">
-          <a class="btn-link" href="/admin/xtream-codes/{{.ID}}/edit">Edit</a>
+          <a class="btn-link" href="/admin/xtream-codes/{{.ID}}/edit">Manage</a>
           <form class="inline" method="post" action="/admin/xtream-codes/{{.ID}}/delete" onsubmit="return confirm('Delete this xtream code?')">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="btn btn-sm btn-danger">Delete</button>
@@ -316,11 +317,11 @@ const dashboardPage = styleBlock + themeToggle + `
       <a class="add-link" href="/admin/users/new">+ Add user</a>
     </div>
     <div class="table-scroll"><table>
-      <tr><th>Username</th><th>Assigned xtream code</th><th>Max streams</th><th></th></tr>
+      <tr><th>Username</th><th>Assigned credential</th><th>Max streams</th><th></th></tr>
       {{range .Users}}
       <tr>
         <td>{{.Username}}</td>
-        <td><span class="badge">{{.XtreamCodeName}}</span></td>
+        <td><span class="badge">{{.XtreamCodeName}}</span> <span class="mono">{{.CredentialUser}}</span></td>
         <td>{{if .MaxConcurrentStreams}}{{.MaxConcurrentStreams}}{{else}}Unlimited{{end}}</td>
         <td class="actions">
           <a class="btn-link" href="/admin/users/{{.ID}}/edit">Edit</a>
@@ -380,6 +381,12 @@ function refreshHealth() {
           '<td><span class="health-time" data-checked="' + item.CheckedAtUnix + '">just now</span></td></tr>';
       }).join('');
       tickHealthTimes();
+
+      var bw = data.bandwidth || {};
+      document.getElementById('bwCurrent').textContent = bw.Current || '—';
+      document.getElementById('bw24h').textContent = (bw.Last24hGB || '0.00') + ' GB';
+      document.getElementById('bw7d').textContent = (bw.Last7dGB || '0.00') + ' GB';
+      document.getElementById('bwPeak').textContent = bw.Peak || '—';
     })
     .catch(function () {});
 }
@@ -396,24 +403,105 @@ setInterval(refreshHealth, 10000);
 </script>
 `
 
-const xtreamCodeFormPage = styleBlock + themeToggle + `
+const xtreamCodeNewFormPage = styleBlock + themeToggle + `
 <div class="wrap">
   <header class="topbar"><h1>iptv-proxy admin</h1><nav><a href="/admin">&larr; Dashboard</a></nav></header>
   <div class="panel" style="max-width:480px;">
-    <h2>{{if .ID}}Edit{{else}}New{{end}} xtream code</h2>
+    <h2>New xtream code</h2>
     {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-    <form method="post" action="{{.Action}}">
+    <form method="post" action="/admin/xtream-codes/new">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label for="name">Name</label>
       <input id="name" type="text" name="name" value="{{.Name}}" autocomplete="off" required autofocus>
       <label for="base_url">Base URLs</label>
       <textarea id="base_url" name="base_url" aria-describedby="base-url-help" placeholder="http://primary.example.tv:8080&#10;http://backup.example.tv:8080" required>{{.BaseURL}}</textarea>
-      <p class="help" id="base-url-help">Enter one address per line. The proxy automatically uses the fastest reachable address.</p>
+      <p class="help" id="base-url-help">Enter one address per line. Each becomes its own row you can toggle on/off, or add more to, from the edit page afterwards.</p>
       <label for="xtream_user">Xtream username</label>
       <input id="xtream_user" type="text" name="xtream_user" value="{{.XtreamUser}}" autocomplete="off" required>
       <label for="xtream_password">Xtream password</label>
       <input id="xtream_password" type="password" name="xtream_password" value="{{.XtreamPassword}}" autocomplete="new-password" required>
+      <p class="help">You can add more username/password pairs from the edit page afterwards.</p>
       <button type="submit" class="btn">Save</button>
+    </form>
+  </div>
+</div>
+`
+
+const xtreamCodeManagePage = styleBlock + themeToggle + `
+<div class="wrap">
+  <header class="topbar"><h1>iptv-proxy admin</h1><nav><a href="/admin">&larr; Dashboard</a></nav></header>
+
+  <div class="panel" style="max-width:480px;">
+    <h2>Rename</h2>
+    <form method="post" action="/admin/xtream-codes/{{.ID}}/edit">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="name">Name</label>
+      <input id="name" type="text" name="name" value="{{.Name}}" autocomplete="off" required>
+      <button type="submit" class="btn">Save</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><h2>Addresses</h2></div>
+    <div class="table-scroll"><table>
+      <tr><th>Address</th><th>Status</th><th></th></tr>
+      {{range .Addresses}}
+      <tr>
+        <td class="mono">{{.Address}}</td>
+        <td>
+          <form class="inline" method="post" action="/admin/xtream-codes/{{$.ID}}/addresses/{{.ID}}/toggle">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">
+            <button type="submit" class="btn-sm {{if .Enabled}}btn{{else}}btn-link{{end}}">{{if .Enabled}}Enabled{{else}}Disabled{{end}}</button>
+          </form>
+        </td>
+        <td class="actions">
+          <form class="inline" method="post" action="/admin/xtream-codes/{{$.ID}}/addresses/{{.ID}}/delete" onsubmit="return confirm('Remove this address?')">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr class="empty-row"><td colspan="3">No addresses yet</td></tr>
+      {{end}}
+    </table></div>
+
+    <form method="post" action="/admin/xtream-codes/{{.ID}}/addresses" style="margin-top:1rem;">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="addresses">Add addresses</label>
+      <textarea id="addresses" name="addresses" placeholder="http://backup2.example.tv:8080"></textarea>
+      <p class="help">One address per line. Paste several at once; each shows up as its own toggleable row above.</p>
+      <button type="submit" class="btn">Add</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><h2>Credentials</h2></div>
+    <div class="table-scroll"><table>
+      <tr><th>Username</th><th></th></tr>
+      {{range .Credentials}}
+      <tr>
+        <td class="mono">{{.XtreamUser}}</td>
+        <td class="actions">
+          <form class="inline" method="post" action="/admin/xtream-codes/{{$.ID}}/credentials/{{.ID}}/delete" onsubmit="return confirm('Delete this credential?')">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr class="empty-row"><td colspan="2">No credentials yet</td></tr>
+      {{end}}
+    </table></div>
+
+    <form method="post" action="/admin/xtream-codes/{{.ID}}/credentials" style="margin-top:1rem;">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="xtream_user">Xtream username</label>
+      <input id="xtream_user" type="text" name="xtream_user" autocomplete="off" required>
+      <label for="xtream_password">Xtream password</label>
+      <input id="xtream_password" type="password" name="xtream_password" autocomplete="new-password" required>
+      <button type="submit" class="btn">Add credential</button>
     </form>
   </div>
 </div>
@@ -431,10 +519,16 @@ const userFormPage = styleBlock + themeToggle + `
       <input id="username" type="text" name="username" value="{{.Username}}" autocomplete="off" required autofocus>
       <label for="password">Password{{if .ID}} (leave blank to keep current){{end}}</label>
       <input id="password" type="password" name="password" autocomplete="new-password" {{if not .ID}}required{{end}}>
-      <label for="xtream_code_id">Xtream code</label>
-      <select id="xtream_code_id" name="xtream_code_id" required>
+      <label for="credential_id">Xtream code / credential</label>
+      <select id="credential_id" name="credential_id" required>
         {{range .XtreamCodes}}
-        <option value="{{.ID}}" {{if eq .ID $.XtreamCodeID}}selected{{end}}>{{.Name}}</option>
+        {{if .Credentials}}
+        <optgroup label="{{.Name}}">
+          {{range .Credentials}}
+          <option value="{{.ID}}" {{if eq .ID $.CredentialID}}selected{{end}}>{{.XtreamUser}}</option>
+          {{end}}
+        </optgroup>
+        {{end}}
         {{end}}
       </select>
       <label for="max_concurrent_streams">Max concurrent streams</label>
@@ -451,6 +545,7 @@ var templates = template.Must(template.New("root").Parse(""))
 func init() {
 	template.Must(templates.New("login").Parse(loginPage))
 	template.Must(templates.New("dashboard").Parse(dashboardPage))
-	template.Must(templates.New("xtreamCodeForm").Parse(xtreamCodeFormPage))
+	template.Must(templates.New("xtreamCodeNewForm").Parse(xtreamCodeNewFormPage))
+	template.Must(templates.New("xtreamCodeManage").Parse(xtreamCodeManagePage))
 	template.Must(templates.New("userForm").Parse(userFormPage))
 }

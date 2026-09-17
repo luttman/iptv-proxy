@@ -66,11 +66,8 @@ func TestLiveStream_RoutesToAssignedBackend(t *testing.T) {
 	proxy := httptest.NewServer(c.Router)
 	defer proxy.Close()
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+	_, cred := newXtreamCode(t, c.Store, "provider-a", upstream.URL, "xuser", "xpass")
+	if _, err := c.Store.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -108,11 +105,8 @@ func TestLiveStream_WrongPasswordRejected(t *testing.T) {
 	proxy := httptest.NewServer(c.Router)
 	defer proxy.Close()
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+	_, cred := newXtreamCode(t, c.Store, "provider-a", upstream.URL, "xuser", "xpass")
+	if _, err := c.Store.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -145,11 +139,8 @@ func TestLiveStream_FailsOverToBackupOnServerError(t *testing.T) {
 	proxy := httptest.NewServer(c.Router)
 	defer proxy.Close()
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", bad.URL+" "+good.URL, "xuser", "xpass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+	_, cred := newXtreamCode(t, c.Store, "provider-a", bad.URL+" "+good.URL, "xuser", "xpass")
+	if _, err := c.Store.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -195,11 +186,8 @@ func TestLiveStream_DoesNotFailOverOnInvalidCredentials(t *testing.T) {
 	proxy := httptest.NewServer(c.Router)
 	defer proxy.Close()
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", primary.URL+" "+backup.URL, "xuser", "xpass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+	_, cred := newXtreamCode(t, c.Store, "provider-a", primary.URL+" "+backup.URL, "xuser", "xpass")
+	if _, err := c.Store.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -231,19 +219,13 @@ func TestLiveStream_TwoUsersDifferentBackends(t *testing.T) {
 	proxy := httptest.NewServer(c.Router)
 	defer proxy.Close()
 
-	xcA, err := c.Store.CreateXtreamCode("provider-a", upstreamA.URL, "xuserA", "xpassA")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
-	xcB, err := c.Store.CreateXtreamCode("provider-b", upstreamB.URL, "xuserB", "xpassB")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
+	_, credA := newXtreamCode(t, c.Store, "provider-a", upstreamA.URL, "xuserA", "xpassA")
+	_, credB := newXtreamCode(t, c.Store, "provider-b", upstreamB.URL, "xuserB", "xpassB")
 
-	if _, err := c.Store.CreateUser("alice", "alicepass", xcA.ID, 0); err != nil {
+	if _, err := c.Store.CreateUser("alice", "alicepass", credA.ID, 0); err != nil {
 		t.Fatalf("CreateUser(alice) error: %v", err)
 	}
-	if _, err := c.Store.CreateUser("bob", "bobpass", xcB.ID, 0); err != nil {
+	if _, err := c.Store.CreateUser("bob", "bobpass", credB.ID, 0); err != nil {
 		t.Fatalf("CreateUser(bob) error: %v", err)
 	}
 
@@ -279,11 +261,8 @@ func TestLiveStream_TrackedWhileActive(t *testing.T) {
 	proxy := httptest.NewServer(c.Router)
 	defer proxy.Close()
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+	_, cred := newXtreamCode(t, c.Store, "provider-a", upstream.URL, "xuser", "xpass")
+	if _, err := c.Store.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -347,11 +326,8 @@ func TestLiveStream_StopForciblyEndsStream(t *testing.T) {
 	proxy := httptest.NewServer(c.Router)
 	defer proxy.Close()
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+	_, cred := newXtreamCode(t, c.Store, "provider-a", upstream.URL, "xuser", "xpass")
+	if _, err := c.Store.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -409,11 +385,8 @@ func TestXMLTV_NoLoginAndNoExtraActionParam(t *testing.T) {
 
 	c := newTestServer(t)
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+	_, cred := newXtreamCode(t, c.Store, "provider-a", upstream.URL, "xuser", "xpass")
+	if _, err := c.Store.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -453,11 +426,8 @@ func TestAuth_RateLimitedAfterRepeatedFailures(t *testing.T) {
 	proxy := httptest.NewServer(c.Router)
 	defer proxy.Close()
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", "http://unused.example.com", "xuser", "xpass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+	_, cred := newXtreamCode(t, c.Store, "provider-a", "http://unused.example.com", "xuser", "xpass")
+	if _, err := c.Store.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -508,12 +478,9 @@ func TestPerUserStreamLimit_EvictsOldestOnNewStream(t *testing.T) {
 	proxy := httptest.NewServer(c.Router)
 	defer proxy.Close()
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "xuser", "xpass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
+	_, cred := newXtreamCode(t, c.Store, "provider-a", upstream.URL, "xuser", "xpass")
 	// Limit of 1: starting a second stream must evict the first.
-	if _, err := c.Store.CreateUser("alice", "hunter2", xc.ID, 1); err != nil {
+	if _, err := c.Store.CreateUser("alice", "hunter2", cred.ID, 1); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 

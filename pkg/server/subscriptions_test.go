@@ -49,7 +49,7 @@ func TestFetchSubscriptionExpiryWithExpiry(t *testing.T) {
 	upstream := xtreamLoginServer(t, fmt.Sprintf("%d", expiresAt.Unix()))
 	defer upstream.Close()
 
-	backend := store.XtreamCode{Name: "provider-a", BaseURL: upstream.URL, XtreamUser: "u", XtreamPassword: "p"}
+	backend := store.ResolvedBackend{Name: "provider-a", BaseURL: upstream.URL, XtreamUser: "u", XtreamPassword: "p"}
 	expiry, err := fetchSubscriptionExpiry(context.Background(), backend)
 	if err != nil {
 		t.Fatalf("fetchSubscriptionExpiry() error: %v", err)
@@ -69,7 +69,7 @@ func TestFetchSubscriptionExpiryUnlimited(t *testing.T) {
 	upstream := xtreamLoginServer(t, "")
 	defer upstream.Close()
 
-	backend := store.XtreamCode{Name: "provider-a", BaseURL: upstream.URL, XtreamUser: "u", XtreamPassword: "p"}
+	backend := store.ResolvedBackend{Name: "provider-a", BaseURL: upstream.URL, XtreamUser: "u", XtreamPassword: "p"}
 	expiry, err := fetchSubscriptionExpiry(context.Background(), backend)
 	if err != nil {
 		t.Fatalf("fetchSubscriptionExpiry() error: %v", err)
@@ -84,7 +84,7 @@ func TestFetchSubscriptionExpiryAlreadyExpired(t *testing.T) {
 	upstream := xtreamLoginServer(t, fmt.Sprintf("%d", expiredAt.Unix()))
 	defer upstream.Close()
 
-	backend := store.XtreamCode{Name: "provider-a", BaseURL: upstream.URL, XtreamUser: "u", XtreamPassword: "p"}
+	backend := store.ResolvedBackend{Name: "provider-a", BaseURL: upstream.URL, XtreamUser: "u", XtreamPassword: "p"}
 	expiry, err := fetchSubscriptionExpiry(context.Background(), backend)
 	if err != nil {
 		t.Fatalf("fetchSubscriptionExpiry() error: %v", err)
@@ -104,9 +104,15 @@ func TestCheckSubscriptionsNarrowsMultiAddressBackend(t *testing.T) {
 	// A backend with a failover address list (space/newline separated)
 	// used to be passed to the xtream client as-is, which url.Parse
 	// rejects outright ("invalid control character in URL").
-	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL+"\r\nhttp://unreachable.invalid", "u", "p")
+	xc, err := c.Store.CreateXtreamCode("provider-a")
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if err := c.Store.AddAddresses(xc.ID, upstream.URL+"\r\nhttp://unreachable.invalid"); err != nil {
+		t.Fatalf("AddAddresses() error: %v", err)
+	}
+	if _, err := c.Store.CreateCredential(xc.ID, "u", "p"); err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
 	}
 
 	c.checkSubscriptions(context.Background())
@@ -124,9 +130,15 @@ func TestCheckSubscriptionsPopulatesSnapshot(t *testing.T) {
 	c := newTestConfig(t)
 	c.subscriptionExpiry = map[int64]SubscriptionExpiry{}
 
-	xc, err := c.Store.CreateXtreamCode("provider-a", upstream.URL, "u", "p")
+	xc, err := c.Store.CreateXtreamCode("provider-a")
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if err := c.Store.AddAddresses(xc.ID, upstream.URL); err != nil {
+		t.Fatalf("AddAddresses() error: %v", err)
+	}
+	if _, err := c.Store.CreateCredential(xc.ID, "u", "p"); err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
 	}
 
 	c.checkSubscriptions(context.Background())

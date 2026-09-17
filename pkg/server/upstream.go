@@ -71,7 +71,7 @@ type UpstreamHealth struct {
 // skipped (used to fail over away from an address that just failed
 // mid-request). Falls back to a one-off live probe only when there
 // is no monitoring data yet to go on (e.g. right after startup).
-func (c *Config) selectUpstream(ctx context.Context, backend store.XtreamCode, exclude string) (store.XtreamCode, error) {
+func (c *Config) selectUpstream(ctx context.Context, backend store.ResolvedBackend, exclude string) (store.ResolvedBackend, error) {
 	addresses := upstreamAddresses(backend)
 	if exclude != "" {
 		filtered := addresses[:0]
@@ -155,7 +155,7 @@ func (c *Config) bestKnownAddress(backendName string, addresses []string) (strin
 
 // probeAllAndPickFastest is the bootstrap fallback used only before
 // any monitoring data exists for a backend's addresses.
-func probeAllAndPickFastest(ctx context.Context, backend store.XtreamCode, addresses []string) (store.XtreamCode, error) {
+func probeAllAndPickFastest(ctx context.Context, backend store.ResolvedBackend, addresses []string) (store.ResolvedBackend, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, upstreamProbeTimeout)
 	defer cancel()
 
@@ -187,7 +187,7 @@ func probeAllAndPickFastest(ctx context.Context, backend store.XtreamCode, addre
 	return backend, nil
 }
 
-func upstreamAddresses(backend store.XtreamCode) []string {
+func upstreamAddresses(backend store.ResolvedBackend) []string {
 	addresses := strings.Fields(backend.BaseURL)
 	for i := range addresses {
 		addresses[i] = strings.TrimRight(addresses[i], "/")
@@ -248,8 +248,15 @@ func (c *Config) checkUpstreams(ctx context.Context) {
 
 	addressBackends := map[string][]backendRef{}
 	for _, backend := range backends {
-		for _, address := range upstreamAddresses(backend) {
-			addressBackends[address] = append(addressBackends[address], backendRef{backend.ID, backend.Name})
+		addresses, err := c.Store.ListAddresses(backend.ID)
+		if err != nil {
+			continue
+		}
+		for _, addr := range addresses {
+			if !addr.Enabled {
+				continue
+			}
+			addressBackends[addr.Address] = append(addressBackends[addr.Address], backendRef{backend.ID, backend.Name})
 		}
 	}
 

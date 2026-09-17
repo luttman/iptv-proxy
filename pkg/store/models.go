@@ -20,25 +20,56 @@ package store
 
 import "time"
 
-// XtreamCode is an upstream xtream-codes backend that one or more
-// users can be assigned to.
+// XtreamCode is a named upstream provider: a group of one or more
+// addresses and one or more credentials. A proxy user is assigned to
+// one specific credential, not to the provider directly.
 type XtreamCode struct {
+	ID        int64
+	Name      string
+	CreatedAt time.Time
+}
+
+// XtreamAddress is one upstream URL under a provider. Enabled
+// controls whether failover/health-checking considers it at all;
+// disabling one doesn't delete its history.
+type XtreamAddress struct {
+	ID           int64
+	XtreamCodeID int64
+	Address      string
+	Enabled      bool
+}
+
+// XtreamCredential is one xtream username/password pair under a
+// provider. Several proxy users may share a credential (subject to
+// the provider's own connection limit) or each get their own.
+type XtreamCredential struct {
 	ID             int64
-	Name           string
-	BaseURL        string
+	XtreamCodeID   int64
 	XtreamUser     string
 	XtreamPassword string
 	CreatedAt      time.Time
 }
 
-// User is a proxy-facing login, assigned to exactly one XtreamCode.
-// MaxConcurrentStreams caps how many streams this user may have open
-// at once; 0 means unlimited.
+// ResolvedBackend is the single, concrete backend a proxy user's
+// credential resolves to for one request: a provider name, one
+// selected (or full, space-separated) set of addresses, and the
+// specific xtream username/password to authenticate with upstream.
+type ResolvedBackend struct {
+	ID             int64 // the XtreamCode (provider) ID
+	Name           string
+	BaseURL        string
+	XtreamUser     string
+	XtreamPassword string
+}
+
+// User is a proxy-facing login, assigned to exactly one
+// XtreamCredential. MaxConcurrentStreams caps how many streams this
+// user may have open at once; 0 means unlimited.
 type User struct {
 	ID                   int64
 	Username             string
 	PasswordHash         string
-	XtreamCodeID         int64
+	CredentialID         int64
 	MaxConcurrentStreams int
 	CreatedAt            time.Time
 }

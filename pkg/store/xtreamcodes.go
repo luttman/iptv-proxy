@@ -29,23 +29,19 @@ import (
 var ErrNotFound = errors.New("not found")
 
 // ErrXtreamCodeInUse is returned when deleting an xtream code that
-// still has users assigned to it.
+// still has a credential assigned to one or more users.
 var ErrXtreamCodeInUse = errors.New("xtream code is still assigned to one or more users")
 
-// CreateXtreamCode inserts a new xtream-code backend.
-func (s *Store) CreateXtreamCode(name, baseURL, xtreamUser, xtreamPassword string) (XtreamCode, error) {
-	encUser, err := encryptValue(s.key, xtreamUser)
-	if err != nil {
-		return XtreamCode{}, fmt.Errorf("create xtream code: %w", err)
-	}
-	encPass, err := encryptValue(s.key, xtreamPassword)
-	if err != nil {
-		return XtreamCode{}, fmt.Errorf("create xtream code: %w", err)
-	}
-
+// CreateXtreamCode inserts a new named provider, with no addresses or
+// credentials yet (add those with AddAddresses/CreateCredential).
+func (s *Store) CreateXtreamCode(name string) (XtreamCode, error) {
+	// base_url/xtream_user/xtream_password stay in the schema so
+	// existing rows (and their NOT NULL constraints) don't need a risky
+	// migration; new rows just leave them empty, since addresses and
+	// credentials now live in their own tables.
 	res, err := s.db.Exec(
-		`INSERT INTO xtream_codes (name, base_url, xtream_user, xtream_password) VALUES (?, ?, ?, ?)`,
-		name, baseURL, encUser, encPass,
+		`INSERT INTO xtream_codes (name, base_url, xtream_user, xtream_password) VALUES (?, '', '', '')`,
+		name,
 	)
 	if err != nil {
 		return XtreamCode{}, fmt.Errorf("create xtream code: %w", err)
@@ -59,32 +55,83 @@ func (s *Store) CreateXtreamCode(name, baseURL, xtreamUser, xtreamPassword strin
 	return s.GetXtreamCode(id)
 }
 
-// UpdateXtreamCode updates an existing xtream-code backend.
-func (s *Store) UpdateXtreamCode(id int64, name, baseURL, xtreamUser, xtreamPassword string) (XtreamCode, error) {
-	encUser, err := encryptValue(s.key, xtreamUser)
-	if err != nil {
-		return XtreamCode{}, fmt.Errorf("update xtream code: %w", err)
-	}
-	encPass, err := encryptValue(s.key, xtreamPassword)
-	if err != nil {
-		return XtreamCode{}, fmt.Errorf("update xtream code: %w", err)
-	}
-
-	_, err = s.db.Exec(
-		`UPDATE xtream_codes SET name = ?, base_url = ?, xtream_user = ?, xtream_password = ? WHERE id = ?`,
-		name, baseURL, encUser, encPass, id,
-	)
-	if err != nil {
+// UpdateXtreamCodeName renames an existing provider.
+func (s *Store) UpdateXtreamCodeName(id int64, name string) (XtreamCode, error) {
+	if _, err := s.db.Exec(`UPDATE xtream_codes SET name = ? WHERE id = ?`, name, id); err != nil {
 		return XtreamCode{}, fmt.Errorf("update xtream code: %w", err)
 	}
 
 	return s.GetXtreamCode(id)
 }
 
-// EncryptExistingCredentials re-encrypts every xtream-code credential
-// with key inside a single transaction, skipping rows already
-// encrypted. Callers should back up the database file before calling
-// this (see cmd/encrypt.go).
+// DeleteXtreamCode removes a provider along with its addresses and
+// credentials. It fails if any of its credentials is still assigned
+// to a user.
+func (s *Store) DeleteXtreamCode(id int64) error {
+	var inUse int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM users u JOIN xtream_credentials c ON c.id = u.credential_id WHERE c.xtream_code_id = ?`,
+		id,
+	).Scan(&inUse); err != nil {
+		return fmt.Errorf("check xtream code usage: %w", err)
+	}
+	if inUse > 0 {
+		return ErrXtreamCodeInUse
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("delete xtream code: %w", err)
+	}
+	defer tx.Rollback() // nolint: errcheck
+
+	for _, stmt := range []string{
+		`DELETE FROM xtream_addresses WHERE xtream_code_id = ?`,
+		`DELETE FROM xtream_credentials WHERE xtream_code_id = ?`,
+		`DELETE FROM xtream_codes WHERE id = ?`,
+	} {
+		if _, err := tx.Exec(stmt, id); err != nil {
+			return fmt.Errorf("delete xtream code: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetXtreamCode looks up a provider by id.
+func (s *Store) GetXtreamCode(id int64) (XtreamCode, error) {
+	row := s.db.QueryRow(`SELECT id, name, created_at FROM xtream_codes WHERE id = ?`, id)
+	return scanXtreamCode(row)
+}
+
+// ListXtreamCodes returns all providers ordered by name.
+func (s *Store) ListXtreamCodes() ([]XtreamCode, error) {
+	rows, err := s.db.Query(`SELECT id, name, created_at FROM xtream_codes ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list xtream codes: %w", err)
+	}
+	defer rows.Close() // nolint: errcheck
+
+	var codes []XtreamCode
+	for rows.Next() {
+		xc, err := scanXtreamCode(rows)
+		if err != nil {
+			return nil, err
+		}
+		codes = append(codes, xc)
+	}
+
+	return codes, rows.Err()
+}
+
+type rowScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+// EncryptExistingCredentials re-encrypts every xtream credential with
+// key inside a single transaction, skipping rows already encrypted.
+// Callers should back up the database file before calling this (see
+// cmd/encrypt.go).
 func (s *Store) EncryptExistingCredentials(key []byte) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -92,7 +139,7 @@ func (s *Store) EncryptExistingCredentials(key []byte) error {
 	}
 	defer tx.Rollback() // nolint: errcheck
 
-	rows, err := tx.Query(`SELECT id, xtream_user, xtream_password FROM xtream_codes`)
+	rows, err := tx.Query(`SELECT id, xtream_user, xtream_password FROM xtream_credentials`)
 	if err != nil {
 		return fmt.Errorf("encrypt credentials: %w", err)
 	}
@@ -128,81 +175,30 @@ func (s *Store) EncryptExistingCredentials(key []byte) error {
 		if err != nil {
 			return fmt.Errorf("encrypt credentials: %w", err)
 		}
-		if _, err := tx.Exec(`UPDATE xtream_codes SET xtream_user = ?, xtream_password = ? WHERE id = ?`, encUser, encPass, r.id); err != nil {
+		if _, err := tx.Exec(`UPDATE xtream_credentials SET xtream_user = ?, xtream_password = ? WHERE id = ?`, encUser, encPass, r.id); err != nil {
 			return fmt.Errorf("encrypt credentials: %w", err)
 		}
+	}
+
+	// backfillAddressesAndCredentials copies xtream_codes' legacy
+	// columns into xtream_credentials verbatim, so a plaintext copy can
+	// still be sitting there even once xtream_credentials is encrypted.
+	// Those columns are unused for anything else now, so clear them.
+	if _, err := tx.Exec(`UPDATE xtream_codes SET xtream_user = '', xtream_password = '' WHERE xtream_user != '' OR xtream_password != ''`); err != nil {
+		return fmt.Errorf("encrypt credentials: %w", err)
 	}
 
 	return tx.Commit()
 }
 
-// DeleteXtreamCode removes an xtream-code backend. It fails if any
-// user is still assigned to it.
-func (s *Store) DeleteXtreamCode(id int64) error {
-	var inUse int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE xtream_code_id = ?`, id).Scan(&inUse); err != nil {
-		return fmt.Errorf("check xtream code usage: %w", err)
-	}
-	if inUse > 0 {
-		return ErrXtreamCodeInUse
-	}
-
-	if _, err := s.db.Exec(`DELETE FROM xtream_codes WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete xtream code: %w", err)
-	}
-
-	return nil
-}
-
-// GetXtreamCode looks up an xtream-code backend by id.
-func (s *Store) GetXtreamCode(id int64) (XtreamCode, error) {
-	row := s.db.QueryRow(
-		`SELECT id, name, base_url, xtream_user, xtream_password, created_at FROM xtream_codes WHERE id = ?`,
-		id,
-	)
-
-	return s.scanXtreamCode(row)
-}
-
-// ListXtreamCodes returns all xtream-code backends ordered by name.
-func (s *Store) ListXtreamCodes() ([]XtreamCode, error) {
-	rows, err := s.db.Query(`SELECT id, name, base_url, xtream_user, xtream_password, created_at FROM xtream_codes ORDER BY name`)
-	if err != nil {
-		return nil, fmt.Errorf("list xtream codes: %w", err)
-	}
-	defer rows.Close() // nolint: errcheck
-
-	var codes []XtreamCode
-	for rows.Next() {
-		xc, err := s.scanXtreamCode(rows)
-		if err != nil {
-			return nil, err
-		}
-		codes = append(codes, xc)
-	}
-
-	return codes, rows.Err()
-}
-
-type rowScanner interface {
-	Scan(dest ...interface{}) error
-}
-
-func (s *Store) scanXtreamCode(row rowScanner) (XtreamCode, error) {
+func scanXtreamCode(row rowScanner) (XtreamCode, error) {
 	var xc XtreamCode
-	err := row.Scan(&xc.ID, &xc.Name, &xc.BaseURL, &xc.XtreamUser, &xc.XtreamPassword, &xc.CreatedAt)
+	err := row.Scan(&xc.ID, &xc.Name, &xc.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return XtreamCode{}, ErrNotFound
 	}
 	if err != nil {
 		return XtreamCode{}, fmt.Errorf("scan xtream code: %w", err)
-	}
-
-	if xc.XtreamUser, err = decryptValue(s.key, xc.XtreamUser); err != nil {
-		return XtreamCode{}, err
-	}
-	if xc.XtreamPassword, err = decryptValue(s.key, xc.XtreamPassword); err != nil {
-		return XtreamCode{}, err
 	}
 
 	return xc, nil

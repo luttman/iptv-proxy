@@ -37,13 +37,31 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-func TestXtreamCodeCRUD(t *testing.T) {
-	s := newTestStore(t)
+// newXtreamCode is the one-shot test convenience the old single-
+// address/single-credential CreateXtreamCode used to be: create the
+// provider, add its addresses, and add one credential.
+func newXtreamCode(t *testing.T, s *Store, name, baseURL, user, pass string) (XtreamCode, XtreamCredential) {
+	t.Helper()
 
-	xc, err := s.CreateXtreamCode("provider-a", "http://a.example.com", "auser", "apass")
+	xc, err := s.CreateXtreamCode(name)
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
+	if err := s.AddAddresses(xc.ID, baseURL); err != nil {
+		t.Fatalf("AddAddresses() error: %v", err)
+	}
+	cred, err := s.CreateCredential(xc.ID, user, pass)
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+
+	return xc, cred
+}
+
+func TestXtreamCodeCRUD(t *testing.T) {
+	s := newTestStore(t)
+
+	xc, _ := newXtreamCode(t, s, "provider-a", "http://a.example.com", "auser", "apass")
 	if xc.ID == 0 {
 		t.Fatal("expected non-zero ID")
 	}
@@ -52,16 +70,24 @@ func TestXtreamCodeCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetXtreamCode() error: %v", err)
 	}
-	if got.Name != "provider-a" || got.BaseURL != "http://a.example.com" {
-		t.Errorf("GetXtreamCode() = %+v, want name/baseURL to match", got)
+	if got.Name != "provider-a" {
+		t.Errorf("GetXtreamCode() = %+v, want name to match", got)
 	}
 
-	updated, err := s.UpdateXtreamCode(xc.ID, "provider-a-renamed", "http://a2.example.com", "auser2", "apass2")
+	addrs, err := s.EnabledAddressesString(xc.ID)
 	if err != nil {
-		t.Fatalf("UpdateXtreamCode() error: %v", err)
+		t.Fatalf("EnabledAddressesString() error: %v", err)
+	}
+	if addrs != "http://a.example.com" {
+		t.Errorf("EnabledAddressesString() = %q, want %q", addrs, "http://a.example.com")
+	}
+
+	updated, err := s.UpdateXtreamCodeName(xc.ID, "provider-a-renamed")
+	if err != nil {
+		t.Fatalf("UpdateXtreamCodeName() error: %v", err)
 	}
 	if updated.Name != "provider-a-renamed" {
-		t.Errorf("UpdateXtreamCode() name = %q, want %q", updated.Name, "provider-a-renamed")
+		t.Errorf("UpdateXtreamCodeName() name = %q, want %q", updated.Name, "provider-a-renamed")
 	}
 
 	list, err := s.ListXtreamCodes()
@@ -84,12 +110,9 @@ func TestXtreamCodeCRUD(t *testing.T) {
 func TestDeleteXtreamCodeInUse(t *testing.T) {
 	s := newTestStore(t)
 
-	xc, err := s.CreateXtreamCode("provider-a", "http://a.example.com", "auser", "apass")
-	if err != nil {
-		t.Fatalf("CreateXtreamCode() error: %v", err)
-	}
+	xc, cred := newXtreamCode(t, s, "provider-a", "http://a.example.com", "auser", "apass")
 
-	if _, err := s.CreateUser("alice", "hunter2", xc.ID, 0); err != nil {
+	if _, err := s.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
 
@@ -98,15 +121,94 @@ func TestDeleteXtreamCodeInUse(t *testing.T) {
 	}
 }
 
-func TestUserCRUDAndAuthenticate(t *testing.T) {
+func TestAddressToggleAndDelete(t *testing.T) {
 	s := newTestStore(t)
 
-	xc, err := s.CreateXtreamCode("provider-a", "http://a.example.com", "auser", "apass")
+	xc, err := s.CreateXtreamCode("provider-a")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if err := s.AddAddresses(xc.ID, "http://a.example.com\nhttp://b.example.com"); err != nil {
+		t.Fatalf("AddAddresses() error: %v", err)
+	}
+
+	addresses, err := s.ListAddresses(xc.ID)
+	if err != nil {
+		t.Fatalf("ListAddresses() error: %v", err)
+	}
+	if len(addresses) != 2 {
+		t.Fatalf("ListAddresses() len = %d, want 2", len(addresses))
+	}
+	for _, a := range addresses {
+		if !a.Enabled {
+			t.Errorf("address %+v should be enabled by default", a)
+		}
+	}
+
+	if err := s.SetAddressEnabled(addresses[0].ID, false); err != nil {
+		t.Fatalf("SetAddressEnabled() error: %v", err)
+	}
+
+	enabled, err := s.EnabledAddressesString(xc.ID)
+	if err != nil {
+		t.Fatalf("EnabledAddressesString() error: %v", err)
+	}
+	if enabled != addresses[1].Address {
+		t.Errorf("EnabledAddressesString() = %q, want only %q", enabled, addresses[1].Address)
+	}
+
+	if err := s.DeleteAddress(addresses[1].ID); err != nil {
+		t.Fatalf("DeleteAddress() error: %v", err)
+	}
+	remaining, err := s.ListAddresses(xc.ID)
+	if err != nil {
+		t.Fatalf("ListAddresses() error: %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Errorf("ListAddresses() after delete len = %d, want 1", len(remaining))
+	}
+}
+
+func TestCredentialCRUDAndInUse(t *testing.T) {
+	s := newTestStore(t)
+
+	xc, err := s.CreateXtreamCode("provider-a")
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
 
-	u, err := s.CreateUser("alice", "hunter2", xc.ID, 2)
+	cred, err := s.CreateCredential(xc.ID, "user1", "pass1")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+
+	got, err := s.GetCredential(cred.ID)
+	if err != nil || got.XtreamUser != "user1" || got.XtreamPassword != "pass1" {
+		t.Errorf("GetCredential() = %+v, err %v, want user1/pass1", got, err)
+	}
+
+	if _, err := s.CreateCredential(xc.ID, "user2", "pass2"); err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+	list, err := s.ListCredentials(xc.ID)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("ListCredentials() = %+v, err %v, want 2 credentials", list, err)
+	}
+
+	if _, err := s.CreateUser("alice", "hunter2", cred.ID, 0); err != nil {
+		t.Fatalf("CreateUser() error: %v", err)
+	}
+	if err := s.DeleteCredential(cred.ID); !errors.Is(err, ErrCredentialInUse) {
+		t.Errorf("DeleteCredential() err = %v, want ErrCredentialInUse", err)
+	}
+}
+
+func TestUserCRUDAndAuthenticate(t *testing.T) {
+	s := newTestStore(t)
+
+	xc, cred := newXtreamCode(t, s, "provider-a", "http://a.example.com", "auser", "apass")
+
+	u, err := s.CreateUser("alice", "hunter2", cred.ID, 2)
 	if err != nil {
 		t.Fatalf("CreateUser() error: %v", err)
 	}
@@ -117,15 +219,21 @@ func TestUserCRUDAndAuthenticate(t *testing.T) {
 		t.Errorf("MaxConcurrentStreams = %d, want 2", u.MaxConcurrentStreams)
 	}
 
-	gotUser, gotXC, err := s.Authenticate("alice", "hunter2")
+	gotUser, gotBackend, err := s.Authenticate("alice", "hunter2")
 	if err != nil {
 		t.Fatalf("Authenticate() error: %v", err)
 	}
 	if gotUser.Username != "alice" {
 		t.Errorf("Authenticate() user = %q, want %q", gotUser.Username, "alice")
 	}
-	if gotXC.ID != xc.ID {
-		t.Errorf("Authenticate() resolved xtream code ID = %d, want %d", gotXC.ID, xc.ID)
+	if gotBackend.ID != xc.ID {
+		t.Errorf("Authenticate() resolved xtream code ID = %d, want %d", gotBackend.ID, xc.ID)
+	}
+	if gotBackend.XtreamUser != "auser" || gotBackend.XtreamPassword != "apass" {
+		t.Errorf("Authenticate() resolved credential = %+v, want auser/apass", gotBackend)
+	}
+	if gotBackend.BaseURL != "http://a.example.com" {
+		t.Errorf("Authenticate() resolved BaseURL = %q, want %q", gotBackend.BaseURL, "http://a.example.com")
 	}
 
 	if _, _, err := s.Authenticate("alice", "wrong-password"); !errors.Is(err, ErrInvalidCredentials) {
@@ -136,7 +244,7 @@ func TestUserCRUDAndAuthenticate(t *testing.T) {
 		t.Errorf("Authenticate() with unknown user: err = %v, want ErrInvalidCredentials", err)
 	}
 
-	updated, err := s.UpdateUser(u.ID, "alice2", "", xc.ID, 3)
+	updated, err := s.UpdateUser(u.ID, "alice2", "", cred.ID, 3)
 	if err != nil {
 		t.Fatalf("UpdateUser() error: %v", err)
 	}
@@ -164,5 +272,48 @@ func TestUserCRUDAndAuthenticate(t *testing.T) {
 
 	if _, err := s.GetUser(u.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetUser() after delete: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUsersCanShareOneCredentialOrHaveTheirOwn(t *testing.T) {
+	s := newTestStore(t)
+
+	xc, err := s.CreateXtreamCode("provider-a")
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if err := s.AddAddresses(xc.ID, "http://a.example.com"); err != nil {
+		t.Fatalf("AddAddresses() error: %v", err)
+	}
+	credA, err := s.CreateCredential(xc.ID, "userA", "passA")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+	credB, err := s.CreateCredential(xc.ID, "userB", "passB")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+
+	if _, err := s.CreateUser("alice", "hunter2", credA.ID, 0); err != nil {
+		t.Fatalf("CreateUser(alice) error: %v", err)
+	}
+	if _, err := s.CreateUser("bob", "hunter3", credB.ID, 0); err != nil {
+		t.Fatalf("CreateUser(bob) error: %v", err)
+	}
+
+	_, aliceBackend, err := s.Authenticate("alice", "hunter2")
+	if err != nil {
+		t.Fatalf("Authenticate(alice) error: %v", err)
+	}
+	_, bobBackend, err := s.Authenticate("bob", "hunter3")
+	if err != nil {
+		t.Fatalf("Authenticate(bob) error: %v", err)
+	}
+
+	if aliceBackend.XtreamUser != "userA" || bobBackend.XtreamUser != "userB" {
+		t.Errorf("each user should resolve to its own credential: alice=%q bob=%q", aliceBackend.XtreamUser, bobBackend.XtreamUser)
+	}
+	if aliceBackend.Name != bobBackend.Name {
+		t.Errorf("both users share the same provider: alice=%q bob=%q", aliceBackend.Name, bobBackend.Name)
 	}
 }

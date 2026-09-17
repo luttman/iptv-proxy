@@ -69,10 +69,32 @@ func (c *Config) checkSubscriptions(ctx context.Context) {
 	}
 
 	for _, backend := range backends {
-		// backend.BaseURL may hold several failover addresses (see
-		// upstreamAddresses); narrow to the one failover would actually
-		// use before logging in.
-		resolved, err := c.selectUpstream(ctx, backend, "")
+		// A provider can have several credentials; any one of them
+		// reports the same account status the provider considers
+		// "the subscription", so the oldest (first-added) credential is
+		// used as the representative one to check.
+		credentials, err := c.Store.ListCredentials(backend.ID)
+		if err != nil || len(credentials) == 0 {
+			continue
+		}
+
+		addresses, err := c.Store.EnabledAddressesString(backend.ID)
+		if err != nil {
+			slog.Warn("subscription check failed", "backend", backend.Name, "error", err)
+			continue
+		}
+
+		unresolved := store.ResolvedBackend{
+			ID:             backend.ID,
+			Name:           backend.Name,
+			BaseURL:        addresses,
+			XtreamUser:     credentials[0].XtreamUser,
+			XtreamPassword: credentials[0].XtreamPassword,
+		}
+
+		// Addresses may still hold several failover candidates; narrow
+		// to the one failover would actually use before logging in.
+		resolved, err := c.selectUpstream(ctx, unresolved, "")
 		if err != nil {
 			slog.Warn("subscription check failed", "backend", backend.Name, "error", err)
 			continue
@@ -90,7 +112,7 @@ func (c *Config) checkSubscriptions(ctx context.Context) {
 	}
 }
 
-func fetchSubscriptionExpiry(ctx context.Context, backend store.XtreamCode) (SubscriptionExpiry, error) {
+func fetchSubscriptionExpiry(ctx context.Context, backend store.ResolvedBackend) (SubscriptionExpiry, error) {
 	loginCtx, cancel := context.WithTimeout(ctx, subscriptionCheckTimeout)
 	defer cancel()
 

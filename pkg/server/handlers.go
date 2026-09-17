@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
 )
 
 func (c *Config) stream(ctx *gin.Context, oriURL *url.URL, ru resolvedUser) {
@@ -91,12 +92,13 @@ func (c *Config) failoverURL(ctx context.Context, oriURL *url.URL, ru resolvedUs
 	failed := strings.TrimRight(oriURL.Scheme+"://"+oriURL.Host, "/")
 
 	// ru.Backend.BaseURL was already narrowed to a single chosen
-	// address at auth time; re-fetch the backend to get back its full
-	// list of addresses to fail over among.
-	backend, err := c.Store.GetXtreamCode(ru.Backend.ID)
+	// address at auth time; re-fetch the full enabled address list to
+	// fail over among (credentials are unchanged, so aren't needed here).
+	addresses, err := c.Store.EnabledAddressesString(ru.Backend.ID)
 	if err != nil {
 		return nil, false
 	}
+	backend := store.ResolvedBackend{ID: ru.Backend.ID, Name: ru.Backend.Name, BaseURL: addresses}
 
 	alt, err := c.selectUpstream(ctx, backend, failed)
 	if err != nil {

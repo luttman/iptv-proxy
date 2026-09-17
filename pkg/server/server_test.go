@@ -58,7 +58,7 @@ func testResolvedUser() resolvedUser {
 	return resolvedUser{
 		ProxyUser:     "puser",
 		ProxyPassword: "ppass",
-		Backend: store.XtreamCode{
+		Backend: store.ResolvedBackend{
 			ID:             1,
 			Name:           "provider-a",
 			BaseURL:        "http://origin.example.com",
@@ -66,6 +66,27 @@ func testResolvedUser() resolvedUser {
 			XtreamPassword: "xpass",
 		},
 	}
+}
+
+// newXtreamCode is the one-shot test convenience the old single-
+// address/single-credential CreateXtreamCode used to be: create the
+// provider, add its addresses, and add one credential.
+func newXtreamCode(t *testing.T, s *store.Store, name, baseURL, user, pass string) (store.XtreamCode, store.XtreamCredential) {
+	t.Helper()
+
+	xc, err := s.CreateXtreamCode(name)
+	if err != nil {
+		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if err := s.AddAddresses(xc.ID, baseURL); err != nil {
+		t.Fatalf("AddAddresses() error: %v", err)
+	}
+	cred, err := s.CreateCredential(xc.ID, user, pass)
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+
+	return xc, cred
 }
 
 func TestReplaceURL_Xtream(t *testing.T) {

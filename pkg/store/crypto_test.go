@@ -43,9 +43,13 @@ func TestCredentialsEncryptedAtRestAndDecryptedOnRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	xc, err := s.CreateXtreamCode("provider-a", "http://a.example.com", "secretuser", "secretpass")
+	xc, err := s.CreateXtreamCode("provider-a")
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	cred, err := s.CreateCredential(xc.ID, "secretuser", "secretpass")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
 	}
 	s.Close() // nolint: errcheck
 
@@ -55,7 +59,7 @@ func TestCredentialsEncryptedAtRestAndDecryptedOnRead(t *testing.T) {
 		t.Fatalf("sql.Open() error: %v", err)
 	}
 	var rawUser, rawPass string
-	row := rawDB.QueryRow(`SELECT xtream_user, xtream_password FROM xtream_codes WHERE id = ?`, xc.ID)
+	row := rawDB.QueryRow(`SELECT xtream_user, xtream_password FROM xtream_credentials WHERE id = ?`, cred.ID)
 	if err := row.Scan(&rawUser, &rawPass); err != nil {
 		t.Fatalf("scan raw row: %v", err)
 	}
@@ -70,12 +74,12 @@ func TestCredentialsEncryptedAtRestAndDecryptedOnRead(t *testing.T) {
 	}
 	defer s2.Close() // nolint: errcheck
 
-	got, err := s2.GetXtreamCode(xc.ID)
+	got, err := s2.GetCredential(cred.ID)
 	if err != nil {
-		t.Fatalf("GetXtreamCode() error: %v", err)
+		t.Fatalf("GetCredential() error: %v", err)
 	}
 	if got.XtreamUser != "secretuser" || got.XtreamPassword != "secretpass" {
-		t.Errorf("GetXtreamCode() = %+v, want decrypted credentials", got)
+		t.Errorf("GetCredential() = %+v, want decrypted credentials", got)
 	}
 }
 
@@ -87,8 +91,12 @@ func TestOpenRefusesMissingOrWrongKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	if _, err := s.CreateXtreamCode("provider-a", "http://a.example.com", "u", "p"); err != nil {
+	xc, err := s.CreateXtreamCode("provider-a")
+	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if _, err := s.CreateCredential(xc.ID, "u", "p"); err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
 	}
 	s.Close() // nolint: errcheck
 
@@ -108,13 +116,21 @@ func TestEncryptExistingCredentialsMigratesInTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	xcA, err := s.CreateXtreamCode("provider-a", "http://a.example.com", "userA", "passA")
+	xcA, err := s.CreateXtreamCode("provider-a")
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	xcB, err := s.CreateXtreamCode("provider-b", "http://b.example.com", "userB", "passB")
+	credA, err := s.CreateCredential(xcA.ID, "userA", "passA")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
+	}
+	xcB, err := s.CreateXtreamCode("provider-b")
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	credB, err := s.CreateCredential(xcB.ID, "userB", "passB")
+	if err != nil {
+		t.Fatalf("CreateCredential() error: %v", err)
 	}
 
 	key := testKey(9)
@@ -129,13 +145,13 @@ func TestEncryptExistingCredentialsMigratesInTransaction(t *testing.T) {
 	}
 	defer s2.Close() // nolint: errcheck
 
-	gotA, err := s2.GetXtreamCode(xcA.ID)
+	gotA, err := s2.GetCredential(credA.ID)
 	if err != nil || gotA.XtreamUser != "userA" || gotA.XtreamPassword != "passA" {
-		t.Errorf("GetXtreamCode(A) = %+v, err %v, want decrypted userA/passA", gotA, err)
+		t.Errorf("GetCredential(A) = %+v, err %v, want decrypted userA/passA", gotA, err)
 	}
-	gotB, err := s2.GetXtreamCode(xcB.ID)
+	gotB, err := s2.GetCredential(credB.ID)
 	if err != nil || gotB.XtreamUser != "userB" || gotB.XtreamPassword != "passB" {
-		t.Errorf("GetXtreamCode(B) = %+v, err %v, want decrypted userB/passB", gotB, err)
+		t.Errorf("GetCredential(B) = %+v, err %v, want decrypted userB/passB", gotB, err)
 	}
 
 	// Running the migration again should be a harmless no-op.

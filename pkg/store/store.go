@@ -22,6 +22,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -61,6 +62,11 @@ func Open(path string, key []byte) (*Store, error) {
 		return nil, err
 	}
 
+	if err := s.backfillAddressesAndCredentials(); err != nil {
+		db.Close() // nolint: errcheck
+		return nil, err
+	}
+
 	return s, nil
 }
 
@@ -88,6 +94,23 @@ CREATE TABLE IF NOT EXISTS users (
 	max_concurrent_streams INTEGER NOT NULL DEFAULT 1,
 	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS xtream_addresses (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	xtream_code_id INTEGER NOT NULL REFERENCES xtream_codes(id),
+	address TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_xtream_addresses_code ON xtream_addresses(xtream_code_id);
+
+CREATE TABLE IF NOT EXISTS xtream_credentials (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	xtream_code_id INTEGER NOT NULL REFERENCES xtream_codes(id),
+	xtream_user TEXT NOT NULL,
+	xtream_password TEXT NOT NULL,
+	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_xtream_credentials_code ON xtream_credentials(xtream_code_id);
 
 CREATE TABLE IF NOT EXISTS upstream_checks (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,32 +142,136 @@ CREATE INDEX IF NOT EXISTS idx_bandwidth_samples_time ON bandwidth_samples(sampl
 		}
 	}
 
+	// A user used to be assigned directly to an xtream_code (one
+	// address list, one credential). Now a provider can hold several
+	// credentials, so a user is assigned to one specific credential
+	// instead; xtream_code_id is kept (and still populated) purely so
+	// existing rows/constraints stay intact.
+	if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN credential_id INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("migrate schema (add credential_id): %w", err)
+		}
+	}
+
+	return nil
+}
+
+// backfillAddressesAndCredentials copies each pre-migration
+// xtream_code's single base_url/xtream_user/xtream_password into the
+// new xtream_addresses/xtream_credentials tables, and points any user
+// still on the old xtream_code_id-only assignment at the migrated
+// credential. It's idempotent: a provider or user already migrated
+// (has address/credential rows, or a non-zero credential_id) is left
+// alone, so this is safe to run on every startup.
+func (s *Store) backfillAddressesAndCredentials() error {
+	rows, err := s.db.Query(`SELECT id, base_url, xtream_user, xtream_password FROM xtream_codes`)
+	if err != nil {
+		return fmt.Errorf("backfill: %w", err)
+	}
+
+	type legacyCode struct {
+		id                  int64
+		baseURL, user, pass string
+	}
+	var codes []legacyCode
+	for rows.Next() {
+		var c legacyCode
+		if err := rows.Scan(&c.id, &c.baseURL, &c.user, &c.pass); err != nil {
+			rows.Close() // nolint: errcheck
+			return fmt.Errorf("backfill: %w", err)
+		}
+		codes = append(codes, c)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close() // nolint: errcheck
+		return fmt.Errorf("backfill: %w", err)
+	}
+	rows.Close() // nolint: errcheck
+
+	for _, c := range codes {
+		var addrCount int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM xtream_addresses WHERE xtream_code_id = ?`, c.id).Scan(&addrCount); err != nil {
+			return fmt.Errorf("backfill: %w", err)
+		}
+		if addrCount == 0 {
+			for _, addr := range strings.Fields(c.baseURL) {
+				addr = strings.TrimRight(addr, "/")
+				if addr == "" {
+					continue
+				}
+				if _, err := s.db.Exec(`INSERT INTO xtream_addresses (xtream_code_id, address, enabled) VALUES (?, ?, 1)`, c.id, addr); err != nil {
+					return fmt.Errorf("backfill: %w", err)
+				}
+			}
+		}
+
+		var credentialID int64
+		if err := s.db.QueryRow(`SELECT id FROM xtream_credentials WHERE xtream_code_id = ? ORDER BY id LIMIT 1`, c.id).Scan(&credentialID); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("backfill: %w", err)
+			}
+			if c.user == "" {
+				continue
+			}
+			// c.user/c.pass are copied verbatim (already encrypted, if
+			// encryption is configured) rather than decrypted and
+			// re-encrypted: their on-disk form is exactly what a
+			// credential row should hold too.
+			res, err := s.db.Exec(`INSERT INTO xtream_credentials (xtream_code_id, xtream_user, xtream_password) VALUES (?, ?, ?)`, c.id, c.user, c.pass)
+			if err != nil {
+				return fmt.Errorf("backfill: %w", err)
+			}
+			credentialID, err = res.LastInsertId()
+			if err != nil {
+				return fmt.Errorf("backfill: %w", err)
+			}
+		}
+
+		if credentialID != 0 {
+			if _, err := s.db.Exec(`UPDATE users SET credential_id = ? WHERE xtream_code_id = ? AND credential_id = 0`, credentialID, c.id); err != nil {
+				return fmt.Errorf("backfill: %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
 // checkEncryptionKey verifies that every stored credential can be
 // decrypted with s.key, refusing to proceed otherwise. This turns a
 // missing/wrong key into a startup failure instead of silent garbage
-// credentials being used against upstream backends.
+// credentials being used against upstream backends. It checks both
+// the legacy xtream_codes columns (the source backfill copies from,
+// on databases not yet migrated) and xtream_credentials (where
+// credentials live from here on).
 func (s *Store) checkEncryptionKey() error {
-	rows, err := s.db.Query(`SELECT xtream_user, xtream_password FROM xtream_codes`)
-	if err != nil {
-		return fmt.Errorf("check encryption key: %w", err)
-	}
-	defer rows.Close() // nolint: errcheck
-
-	for rows.Next() {
-		var user, pass string
-		if err := rows.Scan(&user, &pass); err != nil {
+	for _, table := range []string{"xtream_codes", "xtream_credentials"} {
+		rows, err := s.db.Query(`SELECT xtream_user, xtream_password FROM ` + table)
+		if err != nil {
 			return fmt.Errorf("check encryption key: %w", err)
 		}
-		if _, err := decryptValue(s.key, user); err != nil {
-			return err
+
+		for rows.Next() {
+			var user, pass string
+			if err := rows.Scan(&user, &pass); err != nil {
+				rows.Close() // nolint: errcheck
+				return fmt.Errorf("check encryption key: %w", err)
+			}
+			if _, err := decryptValue(s.key, user); err != nil {
+				rows.Close() // nolint: errcheck
+				return err
+			}
+			if _, err := decryptValue(s.key, pass); err != nil {
+				rows.Close() // nolint: errcheck
+				return err
+			}
 		}
-		if _, err := decryptValue(s.key, pass); err != nil {
-			return err
+		if err := rows.Err(); err != nil {
+			rows.Close() // nolint: errcheck
+			return fmt.Errorf("check encryption key: %w", err)
 		}
+		rows.Close() // nolint: errcheck
 	}
 
-	return rows.Err()
+	return nil
 }

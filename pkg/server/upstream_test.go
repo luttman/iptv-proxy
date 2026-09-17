@@ -36,7 +36,7 @@ func TestSelectUpstreamSkipsUnreachableAddress(t *testing.T) {
 	defer listener.Close() // nolint: errcheck
 
 	c := newTestConfig(t)
-	backend, err := c.selectUpstream(context.Background(), store.XtreamCode{
+	backend, err := c.selectUpstream(context.Background(), store.ResolvedBackend{
 		BaseURL: "http://127.0.0.1:1\nhttp://" + listener.Addr().String(),
 	}, "")
 	if err != nil {
@@ -50,7 +50,7 @@ func TestSelectUpstreamSkipsUnreachableAddress(t *testing.T) {
 
 func TestSelectUpstreamKeepsSingleAddress(t *testing.T) {
 	c := newTestConfig(t)
-	backend, err := c.selectUpstream(context.Background(), store.XtreamCode{BaseURL: "http://example.com/"}, "")
+	backend, err := c.selectUpstream(context.Background(), store.ResolvedBackend{BaseURL: "http://example.com/"}, "")
 	if err != nil {
 		t.Fatalf("selectUpstream() error: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestSelectUpstreamKeepsSingleAddress(t *testing.T) {
 
 func TestSelectUpstreamUsesMonitoringResultsWithoutProbing(t *testing.T) {
 	c := newTestConfig(t)
-	backend := store.XtreamCode{Name: "acme", BaseURL: "http://slow.invalid http://fast.invalid"}
+	backend := store.ResolvedBackend{Name: "acme", BaseURL: "http://slow.invalid http://fast.invalid"}
 
 	// Neither address is actually reachable; if selectUpstream fell
 	// back to probing it would fail. Seed monitoring data instead.
@@ -79,7 +79,7 @@ func TestSelectUpstreamUsesMonitoringResultsWithoutProbing(t *testing.T) {
 
 func TestSelectUpstreamKeepsCurrentWhenDifferenceIsSmall(t *testing.T) {
 	c := newTestConfig(t)
-	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
+	backend := store.ResolvedBackend{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
 
 	c.upstreamHealth["http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 40}
 	c.upstreamHealth["http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20}
@@ -96,7 +96,7 @@ func TestSelectUpstreamKeepsCurrentWhenDifferenceIsSmall(t *testing.T) {
 
 func TestSelectUpstreamSwitchesWhenDifferenceIsLarge(t *testing.T) {
 	c := newTestConfig(t)
-	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
+	backend := store.ResolvedBackend{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
 
 	c.upstreamHealth["http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 500}
 	c.upstreamHealth["http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 20}
@@ -113,7 +113,7 @@ func TestSelectUpstreamSwitchesWhenDifferenceIsLarge(t *testing.T) {
 
 func TestSelectUpstreamExcludesFailedAddress(t *testing.T) {
 	c := newTestConfig(t)
-	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
+	backend := store.ResolvedBackend{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
 
 	c.upstreamHealth["http://a.invalid"] = UpstreamHealth{Up: true, LatencyMS: 5}
 	c.upstreamHealth["http://b.invalid"] = UpstreamHealth{Up: true, LatencyMS: 100}
@@ -129,7 +129,7 @@ func TestSelectUpstreamExcludesFailedAddress(t *testing.T) {
 
 func TestSelectUpstreamStaleDataStillUsed(t *testing.T) {
 	c := newTestConfig(t)
-	backend := store.XtreamCode{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
+	backend := store.ResolvedBackend{Name: "acme", BaseURL: "http://a.invalid http://b.invalid"}
 
 	// Data from well outside the health-check interval is still the
 	// best information available and should still be honored, rather
@@ -153,7 +153,7 @@ func TestSelectUpstreamCancellation(t *testing.T) {
 
 	// No monitoring data at all forces the bootstrap probe fallback,
 	// which must respect a canceled context instead of hanging.
-	_, err := c.selectUpstream(ctx, store.XtreamCode{BaseURL: "http://a.invalid http://b.invalid"}, "")
+	_, err := c.selectUpstream(ctx, store.ResolvedBackend{BaseURL: "http://a.invalid http://b.invalid"}, "")
 	if err == nil {
 		t.Error("selectUpstream() with canceled context: want error, got nil")
 	}
@@ -184,11 +184,19 @@ func TestCheckUpstreamsDoesNotDuplicateProbesForSharedAddress(t *testing.T) {
 	// Two xtream codes sharing the same address: a ping only tests
 	// whether the host is reachable, not which account is behind it,
 	// so it should only be probed once per cycle.
-	if _, err := c.Store.CreateXtreamCode("provider-a", addr, "u1", "p1"); err != nil {
+	xcA, err := c.Store.CreateXtreamCode("provider-a")
+	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
-	if _, err := c.Store.CreateXtreamCode("provider-b", addr, "u2", "p2"); err != nil {
+	if err := c.Store.AddAddresses(xcA.ID, addr); err != nil {
+		t.Fatalf("AddAddresses() error: %v", err)
+	}
+	xcB, err := c.Store.CreateXtreamCode("provider-b")
+	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
+	}
+	if err := c.Store.AddAddresses(xcB.ID, addr); err != nil {
+		t.Fatalf("AddAddresses() error: %v", err)
 	}
 
 	c.checkUpstreams(context.Background())
@@ -211,7 +219,7 @@ func TestCheckUpstreamsDoesNotDuplicateProbesForSharedAddress(t *testing.T) {
 
 func TestRecordHealthPersistsToStore(t *testing.T) {
 	c := newTestConfig(t)
-	xc, err := c.Store.CreateXtreamCode("provider-a", "http://example.com", "u", "p")
+	xc, err := c.Store.CreateXtreamCode("provider-a")
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
@@ -243,7 +251,7 @@ func TestRecordHealthPersistsToStore(t *testing.T) {
 
 func TestUpstreamUptimeUnknownWithoutChecks(t *testing.T) {
 	c := newTestConfig(t)
-	xc, err := c.Store.CreateXtreamCode("provider-a", "http://example.com", "u", "p")
+	xc, err := c.Store.CreateXtreamCode("provider-a")
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
@@ -259,7 +267,7 @@ func TestUpstreamUptimeUnknownWithoutChecks(t *testing.T) {
 
 func TestPruneUpstreamChecksRemovesOldSamples(t *testing.T) {
 	c := newTestConfig(t)
-	xc, err := c.Store.CreateXtreamCode("provider-a", "http://example.com", "u", "p")
+	xc, err := c.Store.CreateXtreamCode("provider-a")
 	if err != nil {
 		t.Fatalf("CreateXtreamCode() error: %v", err)
 	}
