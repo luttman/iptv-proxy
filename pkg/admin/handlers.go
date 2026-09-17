@@ -118,6 +118,14 @@ type dashboardUserRow struct {
 	CredentialLabel string
 }
 
+// codeHealthSummary is how many of a provider's addresses (by name,
+// across BackendHealth's dedup-by-address rows) are currently up, for
+// the small health chip on its dashboard card.
+type codeHealthSummary struct {
+	Up    int
+	Total int
+}
+
 func (a *admin) healthJSON(ctx *gin.Context) {
 	health := a.srv.BackendHealth()
 	online := 0
@@ -172,9 +180,18 @@ func (a *admin) dashboard(ctx *gin.Context) {
 	}
 	health := a.srv.BackendHealth()
 	online := 0
+	codeHealth := map[string]codeHealthSummary{}
 	for _, item := range health {
 		if item.Up {
 			online++
+		}
+		for _, name := range item.Backends {
+			s := codeHealth[name]
+			s.Total++
+			if item.Up {
+				s.Up++
+			}
+			codeHealth[name] = s
 		}
 	}
 
@@ -182,6 +199,7 @@ func (a *admin) dashboard(ctx *gin.Context) {
 	templates.ExecuteTemplate(ctx.Writer, "dashboard", gin.H{ // nolint: errcheck
 		"XtreamCodes":          codes,
 		"AddressesByCode":      addressesByCode,
+		"CodeHealth":           codeHealth,
 		"Users":                rows,
 		"BackendHealth":        health,
 		"OnlineBackends":       online,
@@ -209,6 +227,46 @@ func (a *admin) xtreamCodeCreate(ctx *gin.Context) {
 	}
 
 	ctx.Redirect(http.StatusFound, "/admin")
+}
+
+// xtreamCodeManageFragment renders just the inner content of the
+// "Manage" dialog for one provider, fetched on demand when its
+// Manage button is clicked rather than baked into every dashboard
+// load — with a couple of dozen providers, that's the difference
+// between one page load's worth of markup and twenty.
+func (a *admin) xtreamCodeManageFragment(ctx *gin.Context) {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	xc, err := a.srv.Store.GetXtreamCode(id)
+	if err != nil {
+		ctx.String(http.StatusNotFound, "%s", err)
+		return
+	}
+
+	addresses, err := a.srv.Store.ListAddresses(id)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "%s", err)
+		return
+	}
+
+	credentials, err := a.srv.Store.ListCredentials(id)
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, "%s", err)
+		return
+	}
+
+	ctx.Header("Content-Type", "text/html; charset=utf-8")
+	templates.ExecuteTemplate(ctx.Writer, "manageFragment", gin.H{ // nolint: errcheck
+		"ID":          xc.ID,
+		"Name":        xc.Name,
+		"Addresses":   addresses,
+		"Credentials": credentials,
+		"CSRFToken":   a.csrfToken(ctx),
+	})
 }
 
 func (a *admin) xtreamCodeUpdate(ctx *gin.Context) {
