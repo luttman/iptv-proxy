@@ -106,6 +106,9 @@ func TestCustomProxyRoutesAPIAndDisables(t *testing.T) {
 func TestEnvironmentProxyToggle(t *testing.T) {
 	if os.Getenv("IPTV_PROXY_ENV_TEST") == "1" {
 		srv := proxyTestServer(t)
+		if !srv.ProxySettings().Enabled {
+			t.Fatal("configured environment proxy should default to enabled")
+		}
 		req, _ := http.NewRequest(http.MethodGet, "http://provider.example.com", nil)
 		u, err := srv.outboundProxy.proxy(req)
 		if err != nil || u == nil || u.String() != "http://proxy.example.com:3128" {
@@ -138,5 +141,78 @@ func TestEnvironmentProxyToggle(t *testing.T) {
 	cmd.Env = append(cmd.Env, "IPTV_PROXY_ENV_TEST=1", "HTTP_PROXY=http://proxy.example.com:3128", "NO_PROXY=")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("environment check: %v\n%s", err, output)
+	}
+}
+
+func TestProxyDisabledWithoutConfiguration(t *testing.T) {
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		t.Setenv(name, "")
+	}
+	srv := proxyTestServer(t)
+	if srv.ProxySettings().Enabled {
+		t.Fatal("unconfigured proxy should default to disabled")
+	}
+	if err := srv.SetProxySettings(store.ProxySettings{Enabled: true, UseEnvironment: true}); err != nil {
+		t.Fatal(err)
+	}
+	if srv.ProxySettings().Enabled {
+		t.Fatal("cannot enable an unconfigured environment proxy")
+	}
+	// Also normalize the UI for settings saved by the previous version.
+	srv.outboundProxy.settings.Enabled = true
+	if srv.ProxySettings().Enabled {
+		t.Fatal("legacy unconfigured proxy should display disabled")
+	}
+	t.Setenv("https_proxy", "http://proxy.example.com:3128")
+	other := proxyTestServer(t)
+	if !other.ProxySettings().Enabled {
+		t.Fatal("lowercase environment proxy should default to enabled")
+	}
+	s := other.ProxySettings()
+	s.Enabled = false
+	if err := other.SetProxySettings(s); err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := other.Store.ProxySettings(); err != nil || saved.Enabled {
+		t.Fatalf("explicit disable not persisted: %v", err)
+	}
+}
+
+func TestOutboundProxyCheckDoesNotSave(t *testing.T) {
+	status, body := http.StatusOK, `{"ip":"203.0.113.5"}`
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !r.URL.IsAbs() {
+			t.Error("test did not use the proxy")
+		}
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}))
+	defer proxy.Close()
+	srv := proxyTestServer(t)
+	before := srv.ProxySettings()
+	s := store.ProxySettings{URL: proxy.URL}
+	message, err := testOutboundProxy(context.Background(), s, "http://proxy-check.invalid")
+	if err != nil || !strings.Contains(message, "203.0.113.5") {
+		t.Fatalf("test result: %s %v", message, err)
+	}
+	if srv.ProxySettings() != before {
+		t.Fatal("test changed proxy settings")
+	}
+	status = http.StatusProxyAuthRequired
+	if _, err := testOutboundProxy(context.Background(), s, "http://proxy-check.invalid"); err == nil || !strings.Contains(err.Error(), "authentication") {
+		t.Fatalf("authentication result: %v", err)
+	}
+	status, body = http.StatusOK, "invalid"
+	if _, err := testOutboundProxy(context.Background(), s, "http://proxy-check.invalid"); err == nil {
+		t.Fatal("invalid result accepted")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := testOutboundProxy(ctx, s, "http://proxy-check.invalid"); err == nil {
+		t.Fatal("canceled test succeeded")
+	}
+	s.URL = "http://user:private-secret@host:bad"
+	if _, err := testOutboundProxy(context.Background(), s, "http://proxy-check.invalid"); err == nil || strings.Contains(err.Error(), "private-secret") {
+		t.Fatalf("unsafe error: %v", err)
 	}
 }

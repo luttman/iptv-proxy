@@ -106,9 +106,12 @@ version before using them.
 
 ## Outbound proxy settings
 
-Open **Proxy settings** from the admin dashboard to configure an outbound
+Open the **Proxy settings** popup from the admin dashboard to configure an outbound
 HTTP, HTTPS, or SOCKS5 proxy. Choose **Custom proxy**, enter a URL, enable it,
-and save. An authenticated URL can use `http://username:password@host:port`.
+and save. Use **Test proxy** to check the selected proxy before saving: it
+reports the exit IP and response time through ipify, without changing settings.
+The check has a 10-second timeout and does not measure streaming bandwidth.
+An authenticated URL can use `http://username:password@host:port`.
 
 You can also choose **Environment variables** to use Go's
 [standard environment variables](https://pkg.go.dev/net/http#ProxyFromEnvironment).
@@ -134,7 +137,9 @@ HTTPS_PROXY: socks5://proxy.example.com:1080
 NO_PROXY: localhost,127.0.0.1
 ```
 
-The settings page shows environment proxy addresses with authentication hidden.
+The popup shows environment proxy addresses with authentication hidden. A proxy
+defaults to enabled when an environment proxy is configured; otherwise it is
+disabled. Your saved enable/disable choice is preserved.
 Its enable switch can bypass the environment proxy without changing those values.
 UI settings are stored in SQLite and apply to new requests immediately; active
 streams keep their connections. A saved custom URL overrides environment settings

@@ -1,11 +1,13 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/store"
 )
 
 func proxyLabel(raw string) string {
@@ -29,23 +31,19 @@ func proxyEnv(name string) string {
 }
 
 func (a *admin) proxyPage(ctx *gin.Context) {
-	a.renderProxyPage(ctx, http.StatusOK, "")
+	ctx.Redirect(http.StatusFound, "/admin")
 }
 
-func (a *admin) renderProxyPage(ctx *gin.Context, status int, message string) {
+func (a *admin) proxyTemplateData(ctx *gin.Context) gin.H {
 	settings := a.srv.ProxySettings()
-	ctx.Header("Content-Type", "text/html; charset=utf-8")
-	ctx.Header("Cache-Control", "no-store")
-	ctx.Status(status)
-	templates.ExecuteTemplate(ctx.Writer, "proxy", gin.H{ // nolint: errcheck
+	return gin.H{
 		"Settings": settings, "CustomProxy": proxyLabel(settings.URL),
 		"HTTPProxy": proxyLabel(proxyEnv("HTTP_PROXY")), "HTTPSProxy": proxyLabel(proxyEnv("HTTPS_PROXY")),
 		"NoProxy": proxyEnv("NO_PROXY"), "CSRFToken": a.csrfToken(ctx),
-		"Error": message, "Saved": ctx.Query("saved") == "1",
-	})
+	}
 }
 
-func (a *admin) proxyUpdate(ctx *gin.Context) {
+func (a *admin) proxySettingsFromForm(ctx *gin.Context) (store.ProxySettings, error) {
 	settings := a.srv.ProxySettings()
 	settings.Enabled = ctx.PostForm("enabled") == "on"
 	switch ctx.PostForm("source") {
@@ -54,15 +52,38 @@ func (a *admin) proxyUpdate(ctx *gin.Context) {
 	case "custom":
 		settings.UseEnvironment = false
 	default:
-		a.renderProxyPage(ctx, http.StatusBadRequest, "Choose an environment or custom proxy.")
-		return
+		return settings, errors.New("choose an environment or custom proxy")
 	}
 	if value := ctx.PostForm("proxy_url"); value != "" {
 		settings.URL = value
 	}
-	if err := a.srv.SetProxySettings(settings); err != nil {
-		a.renderProxyPage(ctx, http.StatusBadRequest, "Could not save proxy settings. Enter a valid HTTP or SOCKS5 URL; leave it blank to keep a saved URL.")
+	return settings, nil
+}
+
+func (a *admin) proxyUpdate(ctx *gin.Context) {
+	settings, err := a.proxySettingsFromForm(ctx)
+	if err != nil {
+		ctx.String(http.StatusBadRequest, "%s", err)
 		return
 	}
-	ctx.Redirect(http.StatusSeeOther, "/admin/settings/proxy?saved=1")
+	if err := a.srv.SetProxySettings(settings); err != nil {
+		ctx.String(http.StatusBadRequest, "Could not save proxy settings. Enter a valid HTTP or SOCKS5 URL; leave it blank to keep a saved URL.")
+		return
+	}
+	ctx.Redirect(http.StatusSeeOther, "/admin")
+}
+
+func (a *admin) proxyTest(ctx *gin.Context) {
+	ctx.Header("Cache-Control", "no-store")
+	settings, err := a.proxySettingsFromForm(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+		return
+	}
+	message, err := a.srv.TestOutboundProxy(ctx.Request.Context(), settings)
+	if err != nil {
+		ctx.JSON(http.StatusBadGateway, gin.H{"message": err.Error()})
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"message": message})
 }

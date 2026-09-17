@@ -20,7 +20,19 @@ package config
 
 import (
 	"net/url"
+	"os"
+	"strings"
 )
+
+// HasEnvironmentProxy reports whether an outbound proxy is configured.
+func HasEnvironmentProxy() bool {
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return true
+		}
+	}
+	return false
+}
 
 // CredentialString represents an iptv-proxy credential.
 type CredentialString string

@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+
+	"github.com/pierre-emmanuelJ/iptv-proxy/pkg/config"
 )
 
 // ProxySettings controls outbound HTTP requests. Environment settings are the
@@ -15,7 +17,7 @@ type ProxySettings struct {
 }
 
 func (s *Store) ProxySettings() (ProxySettings, error) {
-	settings := ProxySettings{Enabled: true, UseEnvironment: true}
+	settings := ProxySettings{Enabled: config.HasEnvironmentProxy(), UseEnvironment: true}
 	var value string
 	err := s.db.QueryRow(`SELECT value FROM settings WHERE name = 'outbound_proxy'`).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {

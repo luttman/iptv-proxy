@@ -269,6 +269,26 @@ const styleBlock = `<meta name="viewport" content="width=device-width, initial-s
 const ajaxFormsScript = `
 <script>
 function bindAjaxForms() {
+  document.querySelectorAll('[data-test-proxy]').forEach(function (btn) {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', async function () {
+      var form = btn.closest('form');
+      var result = form.querySelector('[data-proxy-result]');
+      btn.disabled = true;
+      result.textContent = 'Testing proxy…';
+      try {
+        var response = await fetch('/admin/settings/proxy/test', { method: 'POST', body: new FormData(form), credentials: 'same-origin' });
+        if (response.status === 403) throw new Error('Session expired. Reload the dashboard and sign in again.');
+        var data = await response.json();
+        result.textContent = data.message || 'Proxy test failed.';
+      } catch (err) {
+        result.textContent = err.message || 'Could not test the proxy.';
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
   document.querySelectorAll('.ajax-form').forEach(function (form) {
     if (form.dataset.bound) return;
     form.dataset.bound = '1';
@@ -417,7 +437,7 @@ const dashboardPage = styleBlock + themeToggle + `
   <header class="topbar">
     <h1><span class="brand-dot" aria-hidden="true"></span>iptv-proxy</h1>
     <nav>
-      <a href="/admin/settings/proxy">Proxy settings</a>
+      <button type="button" class="btn-link" data-open-dialog="proxyDialog">Proxy settings</button>
       <form class="inline" method="post" action="/admin/logout">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <button type="submit" class="btn-link" style="background:none;border:none;cursor:pointer;">Log out</button>
@@ -567,6 +587,7 @@ const dashboardPage = styleBlock + themeToggle + `
        credential <select> below must pick up a just-added xtream
        code/credential immediately, not the page's stale initial load. -->
   <dialog id="manageDialog" class="dialog-wide"></dialog>
+  <dialog id="proxyDialog" class="dialog-wide" aria-labelledby="proxy-title">{{template "proxy" .Proxy}}</dialog>
 
   <dialog id="addAddressDialog">
     <h2>Add addresses</h2>
@@ -840,15 +861,10 @@ const manageFragmentPage = `
 
 var templates = template.Must(template.New("root").Parse(""))
 
-const proxyPage = styleBlock + themeToggle + `
-<div class="wrap">
-  <header class="topbar"><h1>Outbound proxy</h1><nav><a href="/admin">Dashboard</a></nav></header>
-  <section class="panel" style="max-width:42rem;margin-inline:auto">
-    <div class="panel-header"><h2>Proxy settings</h2><span class="badge">{{if .Settings.Enabled}}Enabled{{else}}Disabled{{end}}</span></div>
-    <p class="mono">Applies to new playback and API requests for all providers. Active streams keep their connection.</p>
-    {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-    {{if .Saved}}<p role="status">Proxy settings saved.</p>{{end}}
-    <form method="post" action="/admin/settings/proxy">
+const proxyPage = `
+    <div class="panel-header"><h2 id="proxy-title">Proxy settings</h2><span class="badge">{{if .Settings.Enabled}}Enabled{{else}}Disabled{{end}}</span></div>
+    <p class="help">Applies to new playback and API requests for all providers. Active streams keep their connection. Without a configured proxy, requests connect directly.</p>
+    <form method="post" action="/admin/settings/proxy" class="ajax-form" data-close-dialog-on-success>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label for="proxy-source">Proxy source</label>
       <select id="proxy-source" name="source">
@@ -860,16 +876,21 @@ const proxyPage = styleBlock + themeToggle + `
       <p id="proxy-url-help" class="mono">Saved proxy: {{.CustomProxy}}. Leave blank to keep it. Authentication is supported with username:password@host; saved credentials are hidden.</p>
       <label for="proxy-enabled"><input id="proxy-enabled" name="enabled" type="checkbox" style="width:auto" {{if .Settings.Enabled}}checked{{end}}> Enable outbound proxy</label>
       <p class="mono">When disabled, new requests connect directly, even if environment variables configure a proxy.</p>
-      <button type="submit" class="btn">Save settings</button>
+      <details>
+        <summary>Environment configuration</summary>
+        <dl><dt>HTTP providers</dt><dd class="mono urls">{{.HTTPProxy}}</dd><dt>HTTPS providers</dt><dd class="mono urls">{{.HTTPSProxy}}</dd><dt>Bypass hosts (NO_PROXY)</dt><dd class="mono urls">{{if .NoProxy}}{{.NoProxy}}{{else}}None configured{{end}}</dd></dl>
+        <p class="help">Environment mode respects NO_PROXY and bypasses localhost. Custom mode uses the entered proxy for every provider. Restart after changing environment variables.</p>
+      </details>
+      <p class="help">Health checks and address selection still connect directly. If a provider is reachable only through the proxy, enable just one address for it.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-test-proxy>Test proxy</button>
+        <button type="button" class="btn-link" data-close-dialog>Cancel</button>
+        <button type="submit" class="btn">Save settings</button>
+      </div>
+      <p class="help">Tests the selected proxy through ipify, even while disabled, without saving. This checks connectivity, not streaming bandwidth.</p>
+      <p class="help" role="status" aria-live="polite" data-proxy-result></p>
     </form>
-  </section>
-  <section class="panel" style="max-width:42rem;margin-inline:auto">
-    <div class="panel-header"><h2>Environment configuration</h2></div>
-    <dl><dt>HTTP providers</dt><dd class="mono urls">{{.HTTPProxy}}</dd><dt>HTTPS providers</dt><dd class="mono urls">{{.HTTPSProxy}}</dd><dt>Bypass hosts (NO_PROXY)</dt><dd class="mono urls">{{if .NoProxy}}{{.NoProxy}}{{else}}None configured{{end}}</dd></dl>
-    <p class="mono">Environment mode respects NO_PROXY and bypasses localhost. Custom mode uses the entered proxy for every provider. Restart after changing environment variables.</p>
-    <p class="mono">Health checks and address selection still connect directly. If a provider is reachable only through the proxy, enable just one address for it.</p>
-  </section>
-</div>`
+`
 
 func init() {
 	template.Must(templates.New("login").Parse(loginPage))

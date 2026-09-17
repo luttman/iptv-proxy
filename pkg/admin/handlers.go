@@ -202,7 +202,9 @@ func (a *admin) dashboard(ctx *gin.Context) {
 	}
 
 	ctx.Header("Content-Type", "text/html; charset=utf-8")
+	ctx.Header("Cache-Control", "no-store")
 	templates.ExecuteTemplate(ctx.Writer, "dashboard", gin.H{ // nolint: errcheck
+		"Proxy":                a.proxyTemplateData(ctx),
 		"XtreamCodes":          codes,
 		"AddressesByCode":      addressesByCode,
 		"CodeHealth":           codeHealth,
